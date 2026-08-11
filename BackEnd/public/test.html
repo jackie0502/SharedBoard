@@ -1,0 +1,96 @@
+<!DOCTYPE html>
+<html lang="zh-Hant">
+<head>
+  <meta charset="UTF-8" />
+  <title>SharedBoard Room 測試</title>
+</head>
+<body>
+  <h1>SharedBoard Room 測試</h1>
+
+  <p>
+    連線狀態：
+    <span id="status">正在連線...</span>
+  </p>
+
+  <p>
+    Socket ID：
+    <span id="socket-id">尚未取得</span>
+  </p>
+
+  <div>
+    <label>
+      使用者名稱：
+      <input id="user-name" value="Person B" />
+    </label>
+  </div>
+
+  <br />
+
+  <div>
+    <label>
+      Room ID：
+      <input id="room-id" value="room-001" />
+    </label>
+
+    <button id="join-button">加入房間</button>
+  </div>
+
+  <h2>事件紀錄</h2>
+  <ul id="event-log"></ul>
+
+  <script src="/socket.io/socket.io.js"></script>
+
+  <script>
+    const socket = io();
+
+    const statusElement = document.getElementById("status");
+    const socketIdElement = document.getElementById("socket-id");
+    const userNameInput = document.getElementById("user-name");
+    const roomIdInput = document.getElementById("room-id");
+    const joinButton = document.getElementById("join-button");
+    const eventLog = document.getElementById("event-log");
+
+    function addLog(message) {
+      const item = document.createElement("li");
+      item.textContent = message;
+      eventLog.appendChild(item);
+    }
+
+    socket.on("connect", () => {
+      statusElement.textContent = "已連線";
+      socketIdElement.textContent = socket.id;
+      addLog(`Socket.IO 連線成功：${socket.id}`);
+    });
+
+    socket.on("disconnect", () => {
+      statusElement.textContent = "已離線";
+      socketIdElement.textContent = "尚未取得";
+      addLog("Socket.IO 連線中斷");
+    });
+
+    joinButton.addEventListener("click", () => {
+      const roomId = roomIdInput.value.trim();
+      const userName = userNameInput.value.trim();
+
+      socket.emit(
+        "room:join",
+        {
+          roomId,
+          userName,
+        },
+        (response) => {
+          addLog(response.message);
+        }
+      );
+    });
+
+    socket.on("user:joined", (data) => {
+      addLog(`${data.userName} 加入了房間`);
+    });
+
+    socket.on("user:left", (data) => {
+      addLog(`${data.userName} 離開了房間`);
+    });
+  </script>
+</body>
+</html>
