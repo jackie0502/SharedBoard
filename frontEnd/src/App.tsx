@@ -1,7 +1,46 @@
 import { useEffect, useRef, useState } from "react";
 import type Konva from "konva";
 import { Ellipse, Layer, Line, Rect, Stage, Text, Transformer } from "react-konva";
+import { socket } from "./socket";
 import type { Tool, WhiteboardObject } from "./types";
+
+type ConnectionStatus = "connecting" | "connected" | "disconnected" | "error";
+type JoinResponse = {
+  success: boolean;
+  roomId?: string;
+  socketId?: string;
+  objects?: WhiteboardObject[];
+  message: string;
+};
+
+type RoomCredentials = {
+  roomId: string;
+  userName: string;
+};
+
+type ObjectCreateResponse = {
+  success: boolean;
+  message: string;
+};
+
+type ObjectDeleteResponse = ObjectCreateResponse & {
+  currentObject?: WhiteboardObject;
+};
+
+const ROOM_STORAGE_KEY = "sharedboard:last-room";
+
+const loadStoredCredentials = (): RoomCredentials | null => {
+  try {
+    const saved = window.localStorage.getItem(ROOM_STORAGE_KEY);
+    if (!saved) return null;
+    const credentials = JSON.parse(saved) as Partial<RoomCredentials>;
+    return typeof credentials.roomId === "string" && typeof credentials.userName === "string"
+      ? { roomId: credentials.roomId, userName: credentials.userName }
+      : null;
+  } catch {
+    return null;
+  }
+};
 
 const TOOL_LABELS: { tool: Tool; icon: string; label: string; shortcut: string }[] = [
   { tool: "select", icon: "↖", label: "選取", shortcut: "V" },
@@ -18,14 +57,177 @@ function App() {
   const containerRef = useRef<HTMLDivElement>(null);
   const transformerRef = useRef<Konva.Transformer>(null);
   const drawingIdRef = useRef<string | null>(null);
+  const drawingObjectRef = useRef<WhiteboardObject | null>(null);
+  const objectsRef = useRef<WhiteboardObject[]>([]);
+  const joinedCredentialsRef = useRef<RoomCredentials | null>(loadStoredCredentials());
   const [stageSize, setStageSize] = useState({ width: 900, height: 620 });
   const [tool, setTool] = useState<Tool>("select");
   const [objects, setObjects] = useState<WhiteboardObject[]>([]);
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const [drawColor, setDrawColor] = useState("#202431");
   const [drawWidth, setDrawWidth] = useState(5);
+  const [connectionStatus, setConnectionStatus] = useState<ConnectionStatus>("connecting");
+  const [socketId, setSocketId] = useState<string | null>(null);
+  const [userName, setUserName] = useState(
+    joinedCredentialsRef.current?.userName ?? "Person B",
+  );
+  const [roomId, setRoomId] = useState(
+    joinedCredentialsRef.current?.roomId ?? "room-001",
+  );
+  const [joinedRoomId, setJoinedRoomId] = useState<string | null>(null);
+  const [joinedUserName, setJoinedUserName] = useState<string | null>(null);
+  const [roomMessage, setRoomMessage] = useState("請加入一個房間");
 
   const selectedObject = objects.find((object) => object.id === selectedId);
+
+  const commitObjects = (
+    updater: (current: WhiteboardObject[]) => WhiteboardObject[],
+  ) => {
+    const next = updater(objectsRef.current);
+    objectsRef.current = next;
+    setObjects(next);
+  };
+
+  const applyRoomSnapshot = (
+    credentials: RoomCredentials,
+    response: JoinResponse,
+    message = response.message,
+  ) => {
+    if (!response.success) {
+      setRoomMessage(response.message);
+      return;
+    }
+
+    joinedCredentialsRef.current = credentials;
+    window.localStorage.setItem(ROOM_STORAGE_KEY, JSON.stringify(credentials));
+    setUserName(credentials.userName);
+    setRoomId(credentials.roomId);
+    setJoinedRoomId(credentials.roomId);
+    setJoinedUserName(credentials.userName);
+    setSelectedId(null);
+    commitObjects(() => response.objects ?? []);
+    setRoomMessage(message);
+  };
+
+  useEffect(() => {
+    const handleConnect = () => {
+      setConnectionStatus("connected");
+      setSocketId(socket.id ?? null);
+
+      const credentials = joinedCredentialsRef.current;
+      if (credentials) {
+        socket.emit("room:join", credentials, (response: JoinResponse) => {
+          applyRoomSnapshot(credentials, response, `已重新加入 ${credentials.roomId}`);
+        });
+      }
+    };
+
+    const handleDisconnect = () => {
+      setConnectionStatus("disconnected");
+      setSocketId(null);
+      if (joinedCredentialsRef.current) setRoomMessage("連線中斷，等待自動重新加入");
+    };
+
+    const handleConnectError = (error: Error) => {
+      console.error("Socket.IO 連線失敗：", error.message);
+      setConnectionStatus("error");
+      setSocketId(null);
+    };
+
+    socket.on("connect", handleConnect);
+    socket.on("disconnect", handleDisconnect);
+    socket.on("connect_error", handleConnectError);
+    setConnectionStatus("connecting");
+    socket.connect();
+
+    return () => {
+      socket.off("connect", handleConnect);
+      socket.off("disconnect", handleDisconnect);
+      socket.off("connect_error", handleConnectError);
+      socket.disconnect();
+    };
+  }, []);
+
+  useEffect(() => {
+    const handleUserJoined = (data: { userName: string }) => {
+      setRoomMessage(`${data.userName} 加入了房間`);
+    };
+
+    const handleUserLeft = (data: { userName: string }) => {
+      setRoomMessage(`${data.userName} 離開了房間`);
+    };
+
+    const handleObjectCreate = (data: { object: WhiteboardObject; userName: string }) => {
+      commitObjects((current) =>
+        current.some((object) => object.id === data.object.id)
+          ? current
+          : [...current, data.object],
+      );
+      setRoomMessage(`${data.userName} 建立了一個物件`);
+    };
+
+    const handleObjectUpdate = (data: { object: WhiteboardObject; userName: string }) => {
+      commitObjects((current) =>
+        current.map((object) =>
+          object.id === data.object.id && data.object.version > object.version
+            ? data.object
+            : object,
+        ),
+      );
+      setRoomMessage(`${data.userName} 更新了一個物件`);
+    };
+
+    const handleObjectDelete = (data: { objectId: string; userName: string }) => {
+      commitObjects((current) =>
+        current.filter((object) => object.id !== data.objectId),
+      );
+      setSelectedId((current) => current === data.objectId ? null : current);
+      setRoomMessage(`${data.userName} 刪除了一個物件`);
+    };
+
+    socket.on("user:joined", handleUserJoined);
+    socket.on("user:left", handleUserLeft);
+    socket.on("object:create", handleObjectCreate);
+    socket.on("object:update", handleObjectUpdate);
+    socket.on("object:delete", handleObjectDelete);
+
+    return () => {
+      socket.off("user:joined", handleUserJoined);
+      socket.off("user:left", handleUserLeft);
+      socket.off("object:create", handleObjectCreate);
+      socket.off("object:update", handleObjectUpdate);
+      socket.off("object:delete", handleObjectDelete);
+    };
+  }, []);
+
+  const handleJoinRoom = (event: React.FormEvent<HTMLFormElement>) => {
+    event.preventDefault();
+
+    const nextUserName = userName.trim();
+    const nextRoomId = roomId.trim();
+
+    if (!nextUserName || !nextRoomId) {
+      setRoomMessage("使用者名稱和 Room ID 都不能空白");
+      return;
+    }
+
+    if (!socket.connected) {
+      setRoomMessage("尚未連上伺服器，請稍後再試");
+      return;
+    }
+
+    setRoomMessage("正在加入房間…");
+    socket.emit(
+      "room:join",
+      { roomId: nextRoomId, userName: nextUserName },
+      (response: JoinResponse) => {
+        applyRoomSnapshot(
+          { roomId: nextRoomId, userName: nextUserName },
+          response,
+        );
+      },
+    );
+  };
 
   useEffect(() => {
     const resize = () => {
@@ -53,8 +255,7 @@ function App() {
     const handleKeyDown = (event: KeyboardEvent) => {
       if ((event.key === "Delete" || event.key === "Backspace") && selectedId) {
         event.preventDefault();
-        setObjects((current) => current.filter((object) => object.id !== selectedId));
-        setSelectedId(null);
+        deleteObject(selectedId);
         return;
       }
       if (event.target instanceof HTMLInputElement) return;
@@ -67,11 +268,83 @@ function App() {
     return () => window.removeEventListener("keydown", handleKeyDown);
   }, [selectedId]);
 
+  const emitObjectUpdate = (object: WhiteboardObject) => {
+    if (!joinedCredentialsRef.current || !socket.connected) {
+      setRoomMessage("尚未加入房間，變更只保留在本機");
+      return;
+    }
+
+    socket.emit(
+      "object:update",
+      { object },
+      (response: ObjectCreateResponse) => {
+        if (!response.success) setRoomMessage(response.message);
+      },
+    );
+  };
+
   const updateObject = (id: string, changes: Partial<WhiteboardObject>) => {
-    setObjects((current) =>
-      current.map((object) =>
-        object.id === id ? { ...object, ...changes, version: object.version + 1 } : object,
-      ),
+    const currentObject = objectsRef.current.find((object) => object.id === id);
+    if (!currentObject) return;
+
+    const updatedObject = {
+      ...currentObject,
+      ...changes,
+      id: currentObject.id,
+      type: currentObject.type,
+      version: currentObject.version + 1,
+    };
+
+    commitObjects((current) =>
+      current.map((object) => object.id === id ? updatedObject : object),
+    );
+    emitObjectUpdate(updatedObject);
+  };
+
+  const deleteObject = (id: string) => {
+    const objectToDelete = objectsRef.current.find((object) => object.id === id);
+    if (!objectToDelete) return;
+
+    commitObjects((current) => current.filter((object) => object.id !== id));
+    setSelectedId(null);
+
+    if (!joinedCredentialsRef.current || !socket.connected) {
+      setRoomMessage("尚未加入房間，刪除只套用在本機");
+      return;
+    }
+
+    socket.emit(
+      "object:delete",
+      {
+        objectId: id,
+        version: objectToDelete.version + 1,
+      },
+      (response: ObjectDeleteResponse) => {
+        if (response.success) return;
+
+        setRoomMessage(response.message);
+        if (!response.currentObject) return;
+        commitObjects((current) =>
+          current.some((object) => object.id === id)
+            ? current
+            : [...current, response.currentObject!],
+        );
+      },
+    );
+  };
+
+  const emitObjectCreate = (object: WhiteboardObject) => {
+    if (!joinedCredentialsRef.current || !socket.connected) {
+      setRoomMessage("尚未加入房間，物件只建立在本機");
+      return;
+    }
+
+    socket.emit(
+      "object:create",
+      { object },
+      (response: ObjectCreateResponse) => {
+        if (!response.success) setRoomMessage(response.message);
+      },
     );
   };
 
@@ -88,7 +361,8 @@ function App() {
         : tool === "circle"
           ? { ...common, type: "circle", width: 120, height: 120, color: "#22c55e" }
           : { ...common, type: "text", width: 180, height: 44, text: "雙擊編輯文字", color: "#202431" };
-    setObjects((current) => [...current, next]);
+    commitObjects((current) => [...current, next]);
+    emitObjectCreate(next);
     setSelectedId(id);
     setTool("select");
   };
@@ -97,43 +371,50 @@ function App() {
     const position = stage.getPointerPosition();
     if (!position) return;
     const id = crypto.randomUUID();
+    const nextStroke: WhiteboardObject = {
+      id,
+      type: "stroke",
+      x: 0,
+      y: 0,
+      points: [position.x, position.y],
+      color: drawColor,
+      strokeWidth: drawWidth,
+      version: 1,
+    };
     drawingIdRef.current = id;
+    drawingObjectRef.current = nextStroke;
     setSelectedId(null);
-    setObjects((current) => [
-      ...current,
-      {
-        id,
-        type: "stroke",
-        x: 0,
-        y: 0,
-        points: [position.x, position.y],
-        color: drawColor,
-        strokeWidth: drawWidth,
-        version: 1,
-      },
-    ]);
+    commitObjects((current) => [...current, nextStroke]);
   };
 
   const continueDrawing = (stage: Konva.Stage) => {
     const id = drawingIdRef.current;
+    const drawingObject = drawingObjectRef.current;
     const position = stage.getPointerPosition();
-    if (!id || !position) return;
-    setObjects((current) =>
+    if (!id || !drawingObject || !position) return;
+    const nextStroke = {
+      ...drawingObject,
+      points: [...(drawingObject.points ?? []), position.x, position.y],
+    };
+    drawingObjectRef.current = nextStroke;
+    commitObjects((current) =>
       current.map((object) =>
-        object.id === id
-          ? { ...object, points: [...(object.points ?? []), position.x, position.y] }
-          : object,
+        object.id === id ? nextStroke : object,
       ),
     );
   };
 
   const finishDrawing = () => {
     const id = drawingIdRef.current;
-    if (!id) return;
+    const drawingObject = drawingObjectRef.current;
+    if (!id || !drawingObject) return;
+    const finishedStroke = { ...drawingObject, version: drawingObject.version + 1 };
     drawingIdRef.current = null;
-    setObjects((current) =>
-      current.map((object) => object.id === id ? { ...object, version: object.version + 1 } : object),
+    drawingObjectRef.current = null;
+    commitObjects((current) =>
+      current.map((object) => object.id === id ? finishedStroke : object),
     );
+    emitObjectCreate(finishedStroke);
   };
 
   const renderObject = (object: WhiteboardObject) => {
@@ -242,7 +523,43 @@ function App() {
     <main className="app-shell">
       <header className="topbar">
         <div className="brand"><span className="brand-mark">S</span><span>SharedBoard</span></div>
-        <div className="mode-pill"><span className="status-dot" />單機模式</div>
+        <div className="realtime-controls">
+          <div
+            className={`mode-pill ${connectionStatus}`}
+            title={socketId ? `Socket ID：${socketId}` : "尚未取得 Socket ID"}
+          >
+            <span className="status-dot" />
+            {connectionStatus === "connected"
+              ? "即時連線"
+              : connectionStatus === "connecting"
+                ? "連線中"
+                : connectionStatus === "error"
+                  ? "連線失敗"
+                  : "已離線"}
+          </div>
+          <form className="room-form" onSubmit={handleJoinRoom}>
+            <input
+              aria-label="使用者名稱"
+              value={userName}
+              onChange={(event) => setUserName(event.target.value)}
+              placeholder="使用者名稱"
+              maxLength={30}
+            />
+            <input
+              aria-label="Room ID"
+              value={roomId}
+              onChange={(event) => setRoomId(event.target.value)}
+              placeholder="Room ID"
+              maxLength={50}
+            />
+            <button type="submit" disabled={connectionStatus !== "connected"}>
+              {joinedRoomId ? "切換房間" : "加入房間"}
+            </button>
+          </form>
+          <span className="room-message" title={roomMessage}>
+            {joinedRoomId ? `${joinedUserName} · ${joinedRoomId}` : roomMessage}
+          </span>
+        </div>
         <div className="object-count">{objects.length} 個物件</div>
       </header>
 
@@ -275,8 +592,7 @@ function App() {
             className="tool danger"
             disabled={!selectedId}
             onClick={() => {
-              setObjects((current) => current.filter((object) => object.id !== selectedId));
-              setSelectedId(null);
+              if (selectedId) deleteObject(selectedId);
             }}
           ><span className="tool-icon">⌫</span><span>刪除</span><kbd>Del</kbd></button>
         </aside>

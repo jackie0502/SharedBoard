@@ -12,11 +12,22 @@ button, input { font: inherit; }
 button { cursor: pointer; }
 
 .app-shell { min-height: 100vh; display: flex; flex-direction: column; }
-.topbar { height: 68px; padding: 0 24px; display: grid; grid-template-columns: 1fr auto 1fr; align-items: center; background: rgba(255,255,255,.95); border-bottom: 1px solid #e7e8ef; z-index: 5; }
+.topbar { min-height: 82px; padding: 10px 24px; display: grid; grid-template-columns: minmax(180px,1fr) auto minmax(100px,1fr); align-items: center; gap: 18px; background: rgba(255,255,255,.95); border-bottom: 1px solid #e7e8ef; z-index: 5; }
 .brand { display: flex; align-items: center; gap: 10px; font-size: 18px; font-weight: 750; letter-spacing: -.02em; }
 .brand-mark { display: grid; place-items: center; width: 34px; height: 34px; color: white; border-radius: 11px; background: linear-gradient(135deg,#7c5cff,#5b35e8); box-shadow: 0 6px 16px #6d4aff42; }
 .mode-pill { display: flex; align-items: center; gap: 8px; padding: 7px 13px; border-radius: 999px; color: #656979; background: #f3f4f8; font-size: 13px; font-weight: 650; }
 .status-dot { width: 7px; height: 7px; background: #f59e0b; border-radius: 50%; }
+.mode-pill.connected .status-dot { background: #22c55e; }
+.mode-pill.disconnected .status-dot, .mode-pill.error .status-dot { background: #ef4444; }
+.mode-pill.connecting .status-dot { animation: connection-pulse 1.2s ease-in-out infinite; }
+@keyframes connection-pulse { 50% { opacity: .35; } }
+.realtime-controls { display: grid; grid-template-columns: auto auto; align-items: center; gap: 6px 10px; }
+.room-form { display: flex; gap: 6px; }
+.room-form input { width: 120px; padding: 7px 9px; border: 1px solid #dfe1e8; border-radius: 8px; outline: none; font-size: 12px; }
+.room-form input:focus { border-color: #8064ed; box-shadow: 0 0 0 3px #7958ed1a; }
+.room-form button { padding: 7px 11px; color: #fff; background: #6d4aff; border: 0; border-radius: 8px; font-size: 12px; font-weight: 700; }
+.room-form button:disabled { cursor: not-allowed; opacity: .45; }
+.room-message { grid-column: 1/-1; max-width: 390px; overflow: hidden; color: #7d808e; font-size: 11px; text-align: center; text-overflow: ellipsis; white-space: nowrap; }
 .object-count { justify-self: end; color: #868998; font-size: 13px; }
 .workspace { flex: 1; min-height: 0; display: grid; grid-template-columns: 104px minmax(0,1fr) 230px; }
 .toolbar, .inspector { padding: 18px 14px; background: #fff; z-index: 2; }
@@ -34,7 +45,7 @@ kbd { position: absolute; right: 7px; top: 6px; padding: 1px 4px; color: #999cab
 .draw-controls strong { color: #5b35e8; }
 .draw-controls input[type="color"] { width: 100%; height: 28px; padding: 2px; border: 1px solid #dadce5; border-radius: 6px; background: #fff; cursor: pointer; }
 .draw-controls input[type="range"] { width: 100%; accent-color: #6d4aff; }
-.board-wrap { position: relative; min-width: 0; min-height: calc(100vh - 68px); overflow: hidden; background-color: #f7f8fc; background-image: radial-gradient(#d5d8e3 1px,transparent 1px); background-size: 24px 24px; }
+.board-wrap { position: relative; min-width: 0; min-height: calc(100vh - 82px); overflow: hidden; background-color: #f7f8fc; background-image: radial-gradient(#d5d8e3 1px,transparent 1px); background-size: 24px 24px; }
 .board-wrap canvas { position: relative; z-index: 1; }
 .empty-state { position: absolute; inset: 0; display: grid; align-content: center; justify-items: center; pointer-events: none; color: #777b8a; text-align: center; }
 .empty-icon { display: grid; place-items: center; width: 54px; height: 54px; margin-bottom: 12px; color: #7657ed; background: #ebe7ff; border-radius: 17px; font-size: 25px; }
@@ -62,6 +73,7 @@ kbd { position: absolute; right: 7px; top: 6px; padding: 1px 4px; color: #999cab
 @media (max-width: 820px) {
   .workspace { grid-template-columns: 82px minmax(0,1fr); }
   .inspector { display: none; }
-  .topbar { grid-template-columns: 1fr auto; }
-  .mode-pill { display: none; }
+  .topbar { grid-template-columns: 1fr; }
+  .brand, .object-count { display: none; }
+  .realtime-controls { justify-content: center; }
 }
