@@ -58,6 +58,10 @@ function App() {
   const transformerRef = useRef<Konva.Transformer>(null);
   const drawingIdRef = useRef<string | null>(null);
   const drawingObjectRef = useRef<WhiteboardObject | null>(null);
+  const lastDrawingSyncRef = useRef(0);
+  const lastDragSyncRef = useRef<Map<string, number>>(new Map());
+  const lastTransformSyncRef = useRef<Map<string, number>>(new Map());
+  const transformBaseRef = useRef<Map<string, WhiteboardObject>>(new Map());
   const shapeStartRef = useRef<{ x: number; y: number } | null>(null);
   const shapeDraftRef = useRef<WhiteboardObject | null>(null);
   const objectsRef = useRef<WhiteboardObject[]>([]);
@@ -303,6 +307,74 @@ function App() {
     emitObjectUpdate(updatedObject);
   };
 
+  const syncObjectPosition = (
+    id: string,
+    x: number,
+    y: number,
+    force = false,
+  ) => {
+    const now = performance.now();
+    const lastSync = lastDragSyncRef.current.get(id) ?? 0;
+
+    if (!force && now - lastSync < 50) return;
+
+    if (force) {
+      lastDragSyncRef.current.delete(id);
+    } else {
+      lastDragSyncRef.current.set(id, now);
+    }
+
+    updateObject(id, { x, y });
+  };
+
+  const startObjectTransform = (id: string) => {
+    const object = objectsRef.current.find((candidate) => candidate.id === id);
+    if (!object) return;
+
+    transformBaseRef.current.set(id, object);
+    lastTransformSyncRef.current.delete(id);
+  };
+
+  const syncObjectTransform = (
+    id: string,
+    node: Konva.Node,
+    force = false,
+  ) => {
+    const now = performance.now();
+    const lastSync = lastTransformSyncRef.current.get(id) ?? 0;
+
+    if (!force && now - lastSync < 50) return;
+
+    const baseObject = transformBaseRef.current.get(id);
+    const currentObject = objectsRef.current.find((object) => object.id === id);
+    if (!baseObject || !currentObject) return;
+
+    const width = Math.max(20, (baseObject.width ?? 100) * Math.abs(node.scaleX()));
+    const height = Math.max(20, (baseObject.height ?? 100) * Math.abs(node.scaleY()));
+    const updatedObject: WhiteboardObject = {
+      ...currentObject,
+      x: baseObject.type === "circle" ? node.x() - width / 2 : node.x(),
+      y: baseObject.type === "circle" ? node.y() - height / 2 : node.y(),
+      width,
+      height,
+      rotation: node.rotation(),
+      version: currentObject.version + 1,
+    };
+
+    objectsRef.current = objectsRef.current.map((object) =>
+      object.id === id ? updatedObject : object,
+    );
+    emitObjectUpdate(updatedObject);
+
+    if (force) {
+      lastTransformSyncRef.current.delete(id);
+      transformBaseRef.current.delete(id);
+      setObjects(objectsRef.current);
+    } else {
+      lastTransformSyncRef.current.set(id, now);
+    }
+  };
+
   const deleteObject = (id: string) => {
     const objectToDelete = objectsRef.current.find((object) => object.id === id);
     if (!objectToDelete) return;
@@ -451,8 +523,10 @@ function App() {
     };
     drawingIdRef.current = id;
     drawingObjectRef.current = nextStroke;
+    lastDrawingSyncRef.current = 0;
     setSelectedId(null);
     commitObjects((current) => [...current, nextStroke]);
+    emitObjectCreate(nextStroke);
   };
 
   const continueDrawing = (stage: Konva.Stage) => {
@@ -460,10 +534,18 @@ function App() {
     const drawingObject = drawingObjectRef.current;
     const position = stage.getPointerPosition();
     if (!id || !drawingObject || !position) return;
-    const nextStroke = {
+    let nextStroke = {
       ...drawingObject,
       points: [...(drawingObject.points ?? []), position.x, position.y],
     };
+
+    const now = performance.now();
+    if (now - lastDrawingSyncRef.current >= 50) {
+      nextStroke = { ...nextStroke, version: nextStroke.version + 1 };
+      lastDrawingSyncRef.current = now;
+      emitObjectUpdate(nextStroke);
+    }
+
     drawingObjectRef.current = nextStroke;
     commitObjects((current) =>
       current.map((object) =>
@@ -479,10 +561,11 @@ function App() {
     const finishedStroke = { ...drawingObject, version: drawingObject.version + 1 };
     drawingIdRef.current = null;
     drawingObjectRef.current = null;
+    lastDrawingSyncRef.current = 0;
     commitObjects((current) =>
       current.map((object) => object.id === id ? finishedStroke : object),
     );
-    emitObjectCreate(finishedStroke);
+    emitObjectUpdate(finishedStroke);
   };
 
   const renderObject = (object: WhiteboardObject) => {
@@ -491,6 +574,7 @@ function App() {
       key: object.id,
       x: object.x,
       y: object.y,
+      rotation: object.rotation ?? 0,
       draggable: tool === "select",
       onClick: (event: Konva.KonvaEventObject<MouseEvent>) => {
         event.cancelBubble = true;
@@ -500,15 +584,24 @@ function App() {
         event.cancelBubble = true;
         setSelectedId(object.id);
       },
+      onDragStart: () => {
+        lastDragSyncRef.current.delete(object.id);
+      },
+      onDragMove: (event: Konva.KonvaEventObject<DragEvent>) =>
+        syncObjectPosition(object.id, event.target.x(), event.target.y()),
       onDragEnd: (event: Konva.KonvaEventObject<DragEvent>) =>
-        updateObject(object.id, { x: event.target.x(), y: event.target.y() }),
+        syncObjectPosition(object.id, event.target.x(), event.target.y(), true),
+      onTransformStart: () => {
+        startObjectTransform(object.id);
+      },
+      onTransform: (event: Konva.KonvaEventObject<Event>) => {
+        syncObjectTransform(object.id, event.target);
+      },
       onTransformEnd: (event: Konva.KonvaEventObject<Event>) => {
         const node = event.target;
-        const width = Math.max(20, (object.width ?? 100) * node.scaleX());
-        const height = Math.max(20, (object.height ?? 100) * node.scaleY());
+        syncObjectTransform(object.id, node, true);
         node.scaleX(1);
         node.scaleY(1);
-        updateObject(object.id, { x: node.x(), y: node.y(), width, height, rotation: node.rotation() });
       },
     };
 
@@ -529,26 +622,21 @@ function App() {
           shadowColor="#15803d"
           shadowBlur={12}
           shadowOpacity={0.16}
-          onDragEnd={(event) =>
-            updateObject(object.id, {
-              x: event.target.x() - width / 2,
-              y: event.target.y() - height / 2,
-            })
+          onDragMove={(event) =>
+            syncObjectPosition(
+              object.id,
+              event.target.x() - width / 2,
+              event.target.y() - height / 2,
+            )
           }
-          onTransformEnd={(event) => {
-            const node = event.target;
-            const nextWidth = Math.max(20, width * node.scaleX());
-            const nextHeight = Math.max(20, height * node.scaleY());
-            node.scaleX(1);
-            node.scaleY(1);
-            updateObject(object.id, {
-              x: node.x() - nextWidth / 2,
-              y: node.y() - nextHeight / 2,
-              width: nextWidth,
-              height: nextHeight,
-              rotation: node.rotation(),
-            });
-          }}
+          onDragEnd={(event) =>
+            syncObjectPosition(
+              object.id,
+              event.target.x() - width / 2,
+              event.target.y() - height / 2,
+              true,
+            )
+          }
         />
       );
     }
