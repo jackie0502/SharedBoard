@@ -58,6 +58,8 @@ function App() {
   const transformerRef = useRef<Konva.Transformer>(null);
   const drawingIdRef = useRef<string | null>(null);
   const drawingObjectRef = useRef<WhiteboardObject | null>(null);
+  const shapeStartRef = useRef<{ x: number; y: number } | null>(null);
+  const shapeDraftRef = useRef<WhiteboardObject | null>(null);
   const objectsRef = useRef<WhiteboardObject[]>([]);
   const joinedCredentialsRef = useRef<RoomCredentials | null>(loadStoredCredentials());
   const [stageSize, setStageSize] = useState({ width: 900, height: 620 });
@@ -353,17 +355,83 @@ function App() {
       setSelectedId(null);
       return;
     }
+    if (tool !== "text") return;
+
     const id = crypto.randomUUID();
     const common = { id, x, y, version: 1 };
-    const next: WhiteboardObject =
-      tool === "rect"
-        ? { ...common, type: "rect", width: 150, height: 100, color: "#8b5cf6" }
-        : tool === "circle"
-          ? { ...common, type: "circle", width: 120, height: 120, color: "#22c55e" }
-          : { ...common, type: "text", width: 180, height: 44, text: "雙擊編輯文字", color: "#202431" };
+    const next: WhiteboardObject = {
+      ...common,
+      type: "text",
+      width: 180,
+      height: 44,
+      text: "雙擊編輯文字",
+      color: "#202431",
+    };
     commitObjects((current) => [...current, next]);
     emitObjectCreate(next);
     setSelectedId(id);
+    setTool("select");
+  };
+
+  const startShapePlacement = (stage: Konva.Stage) => {
+    if (tool !== "rect" && tool !== "circle") return;
+    const position = stage.getPointerPosition();
+    if (!position) return;
+
+    const draft: WhiteboardObject = {
+      id: crypto.randomUUID(),
+      type: tool,
+      x: position.x,
+      y: position.y,
+      width: 0,
+      height: 0,
+      color: tool === "rect" ? "#8b5cf6" : "#22c55e",
+      version: 1,
+    };
+
+    shapeStartRef.current = position;
+    shapeDraftRef.current = draft;
+    setSelectedId(null);
+    commitObjects((current) => [...current, draft]);
+  };
+
+  const continueShapePlacement = (stage: Konva.Stage) => {
+    const start = shapeStartRef.current;
+    const draft = shapeDraftRef.current;
+    const position = stage.getPointerPosition();
+    if (!start || !draft || !position) return;
+
+    const nextDraft: WhiteboardObject = {
+      ...draft,
+      x: Math.min(start.x, position.x),
+      y: Math.min(start.y, position.y),
+      width: Math.abs(position.x - start.x),
+      height: Math.abs(position.y - start.y),
+    };
+
+    shapeDraftRef.current = nextDraft;
+    commitObjects((current) =>
+      current.map((object) => object.id === draft.id ? nextDraft : object),
+    );
+  };
+
+  const finishShapePlacement = () => {
+    const draft = shapeDraftRef.current;
+    if (!draft) return;
+
+    const finishedShape: WhiteboardObject = {
+      ...draft,
+      width: Math.max(10, draft.width ?? 0),
+      height: Math.max(10, draft.height ?? 0),
+    };
+
+    shapeStartRef.current = null;
+    shapeDraftRef.current = null;
+    commitObjects((current) =>
+      current.map((object) => object.id === draft.id ? finishedShape : object),
+    );
+    emitObjectCreate(finishedShape);
+    setSelectedId(finishedShape.id);
     setTool("select");
   };
 
@@ -614,21 +682,46 @@ function App() {
                 startDrawing(event.target.getStage()!);
                 return;
               }
+              if (tool === "rect" || tool === "circle") {
+                startShapePlacement(event.target.getStage()!);
+                return;
+              }
               const position = event.target.getStage()?.getPointerPosition();
               if (position) createObject(position.x, position.y);
             }}
             onMouseMove={(event) => {
               if (tool === "draw") continueDrawing(event.target.getStage()!);
+              continueShapePlacement(event.target.getStage()!);
             }}
-            onMouseUp={finishDrawing}
-            onMouseLeave={finishDrawing}
+            onMouseUp={() => {
+              finishDrawing();
+              finishShapePlacement();
+            }}
+            onMouseLeave={() => {
+              finishDrawing();
+              finishShapePlacement();
+            }}
             onTouchStart={(event) => {
-              if (tool === "draw" && event.target === event.target.getStage()) startDrawing(event.target.getStage()!);
+              if (event.target !== event.target.getStage()) return;
+              if (tool === "draw") {
+                startDrawing(event.target.getStage()!);
+                return;
+              }
+              if (tool === "rect" || tool === "circle") {
+                startShapePlacement(event.target.getStage()!);
+                return;
+              }
+              const position = event.target.getStage()?.getPointerPosition();
+              if (position) createObject(position.x, position.y);
             }}
             onTouchMove={(event) => {
               if (tool === "draw") continueDrawing(event.target.getStage()!);
+              continueShapePlacement(event.target.getStage()!);
             }}
-            onTouchEnd={finishDrawing}
+            onTouchEnd={() => {
+              finishDrawing();
+              finishShapePlacement();
+            }}
           >
             <Layer>
               {objects.map(renderObject)}
@@ -648,7 +741,11 @@ function App() {
             </Layer>
           </Stage>
           <div className="board-hint">
-            {tool === "select" ? "點選物件進行移動或縮放" : `點擊畫布建立${TOOL_LABELS.find((item) => item.tool === tool)?.label}`}
+            {tool === "select"
+              ? "點選物件進行移動或縮放"
+              : tool === "rect" || tool === "circle"
+                ? `在畫布上拖曳以建立${TOOL_LABELS.find((item) => item.tool === tool)?.label}`
+                : `點擊畫布建立${TOOL_LABELS.find((item) => item.tool === tool)?.label}`}
           </div>
         </div>
 
