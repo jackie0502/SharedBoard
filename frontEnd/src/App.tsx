@@ -58,6 +58,12 @@ function App() {
   const transformerRef = useRef<Konva.Transformer>(null);
   const drawingIdRef = useRef<string | null>(null);
   const drawingObjectRef = useRef<WhiteboardObject | null>(null);
+  const lastDrawingSyncRef = useRef(0);
+  const lastDragSyncRef = useRef<Map<string, number>>(new Map());
+  const lastTransformSyncRef = useRef<Map<string, number>>(new Map());
+  const transformBaseRef = useRef<Map<string, WhiteboardObject>>(new Map());
+  const shapeStartRef = useRef<{ x: number; y: number } | null>(null);
+  const shapeDraftRef = useRef<WhiteboardObject | null>(null);
   const objectsRef = useRef<WhiteboardObject[]>([]);
   const joinedCredentialsRef = useRef<RoomCredentials | null>(loadStoredCredentials());
   const [stageSize, setStageSize] = useState({ width: 900, height: 620 });
@@ -301,6 +307,74 @@ function App() {
     emitObjectUpdate(updatedObject);
   };
 
+  const syncObjectPosition = (
+    id: string,
+    x: number,
+    y: number,
+    force = false,
+  ) => {
+    const now = performance.now();
+    const lastSync = lastDragSyncRef.current.get(id) ?? 0;
+
+    if (!force && now - lastSync < 50) return;
+
+    if (force) {
+      lastDragSyncRef.current.delete(id);
+    } else {
+      lastDragSyncRef.current.set(id, now);
+    }
+
+    updateObject(id, { x, y });
+  };
+
+  const startObjectTransform = (id: string) => {
+    const object = objectsRef.current.find((candidate) => candidate.id === id);
+    if (!object) return;
+
+    transformBaseRef.current.set(id, object);
+    lastTransformSyncRef.current.delete(id);
+  };
+
+  const syncObjectTransform = (
+    id: string,
+    node: Konva.Node,
+    force = false,
+  ) => {
+    const now = performance.now();
+    const lastSync = lastTransformSyncRef.current.get(id) ?? 0;
+
+    if (!force && now - lastSync < 50) return;
+
+    const baseObject = transformBaseRef.current.get(id);
+    const currentObject = objectsRef.current.find((object) => object.id === id);
+    if (!baseObject || !currentObject) return;
+
+    const width = Math.max(20, (baseObject.width ?? 100) * Math.abs(node.scaleX()));
+    const height = Math.max(20, (baseObject.height ?? 100) * Math.abs(node.scaleY()));
+    const updatedObject: WhiteboardObject = {
+      ...currentObject,
+      x: baseObject.type === "circle" ? node.x() - width / 2 : node.x(),
+      y: baseObject.type === "circle" ? node.y() - height / 2 : node.y(),
+      width,
+      height,
+      rotation: node.rotation(),
+      version: currentObject.version + 1,
+    };
+
+    objectsRef.current = objectsRef.current.map((object) =>
+      object.id === id ? updatedObject : object,
+    );
+    emitObjectUpdate(updatedObject);
+
+    if (force) {
+      lastTransformSyncRef.current.delete(id);
+      transformBaseRef.current.delete(id);
+      setObjects(objectsRef.current);
+    } else {
+      lastTransformSyncRef.current.set(id, now);
+    }
+  };
+
   const deleteObject = (id: string) => {
     const objectToDelete = objectsRef.current.find((object) => object.id === id);
     if (!objectToDelete) return;
@@ -353,17 +427,83 @@ function App() {
       setSelectedId(null);
       return;
     }
+    if (tool !== "text") return;
+
     const id = crypto.randomUUID();
     const common = { id, x, y, version: 1 };
-    const next: WhiteboardObject =
-      tool === "rect"
-        ? { ...common, type: "rect", width: 150, height: 100, color: "#8b5cf6" }
-        : tool === "circle"
-          ? { ...common, type: "circle", width: 120, height: 120, color: "#22c55e" }
-          : { ...common, type: "text", width: 180, height: 44, text: "雙擊編輯文字", color: "#202431" };
+    const next: WhiteboardObject = {
+      ...common,
+      type: "text",
+      width: 180,
+      height: 44,
+      text: "雙擊編輯文字",
+      color: "#202431",
+    };
     commitObjects((current) => [...current, next]);
     emitObjectCreate(next);
     setSelectedId(id);
+    setTool("select");
+  };
+
+  const startShapePlacement = (stage: Konva.Stage) => {
+    if (tool !== "rect" && tool !== "circle") return;
+    const position = stage.getPointerPosition();
+    if (!position) return;
+
+    const draft: WhiteboardObject = {
+      id: crypto.randomUUID(),
+      type: tool,
+      x: position.x,
+      y: position.y,
+      width: 0,
+      height: 0,
+      color: tool === "rect" ? "#8b5cf6" : "#22c55e",
+      version: 1,
+    };
+
+    shapeStartRef.current = position;
+    shapeDraftRef.current = draft;
+    setSelectedId(null);
+    commitObjects((current) => [...current, draft]);
+  };
+
+  const continueShapePlacement = (stage: Konva.Stage) => {
+    const start = shapeStartRef.current;
+    const draft = shapeDraftRef.current;
+    const position = stage.getPointerPosition();
+    if (!start || !draft || !position) return;
+
+    const nextDraft: WhiteboardObject = {
+      ...draft,
+      x: Math.min(start.x, position.x),
+      y: Math.min(start.y, position.y),
+      width: Math.abs(position.x - start.x),
+      height: Math.abs(position.y - start.y),
+    };
+
+    shapeDraftRef.current = nextDraft;
+    commitObjects((current) =>
+      current.map((object) => object.id === draft.id ? nextDraft : object),
+    );
+  };
+
+  const finishShapePlacement = () => {
+    const draft = shapeDraftRef.current;
+    if (!draft) return;
+
+    const finishedShape: WhiteboardObject = {
+      ...draft,
+      width: Math.max(10, draft.width ?? 0),
+      height: Math.max(10, draft.height ?? 0),
+    };
+
+    shapeStartRef.current = null;
+    shapeDraftRef.current = null;
+    commitObjects((current) =>
+      current.map((object) => object.id === draft.id ? finishedShape : object),
+    );
+    emitObjectCreate(finishedShape);
+    setSelectedId(finishedShape.id);
     setTool("select");
   };
 
@@ -383,8 +523,10 @@ function App() {
     };
     drawingIdRef.current = id;
     drawingObjectRef.current = nextStroke;
+    lastDrawingSyncRef.current = 0;
     setSelectedId(null);
     commitObjects((current) => [...current, nextStroke]);
+    emitObjectCreate(nextStroke);
   };
 
   const continueDrawing = (stage: Konva.Stage) => {
@@ -392,10 +534,18 @@ function App() {
     const drawingObject = drawingObjectRef.current;
     const position = stage.getPointerPosition();
     if (!id || !drawingObject || !position) return;
-    const nextStroke = {
+    let nextStroke = {
       ...drawingObject,
       points: [...(drawingObject.points ?? []), position.x, position.y],
     };
+
+    const now = performance.now();
+    if (now - lastDrawingSyncRef.current >= 50) {
+      nextStroke = { ...nextStroke, version: nextStroke.version + 1 };
+      lastDrawingSyncRef.current = now;
+      emitObjectUpdate(nextStroke);
+    }
+
     drawingObjectRef.current = nextStroke;
     commitObjects((current) =>
       current.map((object) =>
@@ -411,10 +561,11 @@ function App() {
     const finishedStroke = { ...drawingObject, version: drawingObject.version + 1 };
     drawingIdRef.current = null;
     drawingObjectRef.current = null;
+    lastDrawingSyncRef.current = 0;
     commitObjects((current) =>
       current.map((object) => object.id === id ? finishedStroke : object),
     );
-    emitObjectCreate(finishedStroke);
+    emitObjectUpdate(finishedStroke);
   };
 
   const renderObject = (object: WhiteboardObject) => {
@@ -423,6 +574,7 @@ function App() {
       key: object.id,
       x: object.x,
       y: object.y,
+      rotation: object.rotation ?? 0,
       draggable: tool === "select",
       onClick: (event: Konva.KonvaEventObject<MouseEvent>) => {
         event.cancelBubble = true;
@@ -432,15 +584,24 @@ function App() {
         event.cancelBubble = true;
         setSelectedId(object.id);
       },
+      onDragStart: () => {
+        lastDragSyncRef.current.delete(object.id);
+      },
+      onDragMove: (event: Konva.KonvaEventObject<DragEvent>) =>
+        syncObjectPosition(object.id, event.target.x(), event.target.y()),
       onDragEnd: (event: Konva.KonvaEventObject<DragEvent>) =>
-        updateObject(object.id, { x: event.target.x(), y: event.target.y() }),
+        syncObjectPosition(object.id, event.target.x(), event.target.y(), true),
+      onTransformStart: () => {
+        startObjectTransform(object.id);
+      },
+      onTransform: (event: Konva.KonvaEventObject<Event>) => {
+        syncObjectTransform(object.id, event.target);
+      },
       onTransformEnd: (event: Konva.KonvaEventObject<Event>) => {
         const node = event.target;
-        const width = Math.max(20, (object.width ?? 100) * node.scaleX());
-        const height = Math.max(20, (object.height ?? 100) * node.scaleY());
+        syncObjectTransform(object.id, node, true);
         node.scaleX(1);
         node.scaleY(1);
-        updateObject(object.id, { x: node.x(), y: node.y(), width, height, rotation: node.rotation() });
       },
     };
 
@@ -461,26 +622,21 @@ function App() {
           shadowColor="#15803d"
           shadowBlur={12}
           shadowOpacity={0.16}
-          onDragEnd={(event) =>
-            updateObject(object.id, {
-              x: event.target.x() - width / 2,
-              y: event.target.y() - height / 2,
-            })
+          onDragMove={(event) =>
+            syncObjectPosition(
+              object.id,
+              event.target.x() - width / 2,
+              event.target.y() - height / 2,
+            )
           }
-          onTransformEnd={(event) => {
-            const node = event.target;
-            const nextWidth = Math.max(20, width * node.scaleX());
-            const nextHeight = Math.max(20, height * node.scaleY());
-            node.scaleX(1);
-            node.scaleY(1);
-            updateObject(object.id, {
-              x: node.x() - nextWidth / 2,
-              y: node.y() - nextHeight / 2,
-              width: nextWidth,
-              height: nextHeight,
-              rotation: node.rotation(),
-            });
-          }}
+          onDragEnd={(event) =>
+            syncObjectPosition(
+              object.id,
+              event.target.x() - width / 2,
+              event.target.y() - height / 2,
+              true,
+            )
+          }
         />
       );
     }
@@ -614,21 +770,46 @@ function App() {
                 startDrawing(event.target.getStage()!);
                 return;
               }
+              if (tool === "rect" || tool === "circle") {
+                startShapePlacement(event.target.getStage()!);
+                return;
+              }
               const position = event.target.getStage()?.getPointerPosition();
               if (position) createObject(position.x, position.y);
             }}
             onMouseMove={(event) => {
               if (tool === "draw") continueDrawing(event.target.getStage()!);
+              continueShapePlacement(event.target.getStage()!);
             }}
-            onMouseUp={finishDrawing}
-            onMouseLeave={finishDrawing}
+            onMouseUp={() => {
+              finishDrawing();
+              finishShapePlacement();
+            }}
+            onMouseLeave={() => {
+              finishDrawing();
+              finishShapePlacement();
+            }}
             onTouchStart={(event) => {
-              if (tool === "draw" && event.target === event.target.getStage()) startDrawing(event.target.getStage()!);
+              if (event.target !== event.target.getStage()) return;
+              if (tool === "draw") {
+                startDrawing(event.target.getStage()!);
+                return;
+              }
+              if (tool === "rect" || tool === "circle") {
+                startShapePlacement(event.target.getStage()!);
+                return;
+              }
+              const position = event.target.getStage()?.getPointerPosition();
+              if (position) createObject(position.x, position.y);
             }}
             onTouchMove={(event) => {
               if (tool === "draw") continueDrawing(event.target.getStage()!);
+              continueShapePlacement(event.target.getStage()!);
             }}
-            onTouchEnd={finishDrawing}
+            onTouchEnd={() => {
+              finishDrawing();
+              finishShapePlacement();
+            }}
           >
             <Layer>
               {objects.map(renderObject)}
@@ -648,7 +829,11 @@ function App() {
             </Layer>
           </Stage>
           <div className="board-hint">
-            {tool === "select" ? "點選物件進行移動或縮放" : `點擊畫布建立${TOOL_LABELS.find((item) => item.tool === tool)?.label}`}
+            {tool === "select"
+              ? "點選物件進行移動或縮放"
+              : tool === "rect" || tool === "circle"
+                ? `在畫布上拖曳以建立${TOOL_LABELS.find((item) => item.tool === tool)?.label}`
+                : `點擊畫布建立${TOOL_LABELS.find((item) => item.tool === tool)?.label}`}
           </div>
         </div>
 
