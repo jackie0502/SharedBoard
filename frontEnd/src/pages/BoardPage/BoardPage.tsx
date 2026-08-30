@@ -19,6 +19,7 @@ import WhiteboardToolbar from "../../features/whiteboard/components/WhiteboardTo
 import WhiteboardObjectRenderer from "../../features/whiteboard/components/WhiteboardObjectRenderer";
 import { useKeyboardShortcuts } from "../../features/whiteboard/hooks/useKeyboardShortcuts";
 import { useStageSize } from "../../features/whiteboard/hooks/useStageSize";
+import { eraseStrokeAlongPath } from "../../features/whiteboard/eraseStroke";
 import { socket } from "../../socket";
 import type { Tool, WhiteboardObject } from "../../types";
 
@@ -55,9 +56,8 @@ function BoardPage({ initialCredentials, onLeaveRoom }: BoardPageProps) {
   const containerRef = useRef<HTMLDivElement>(null);
   const drawingIdRef = useRef<string | null>(null);
   const drawingObjectRef = useRef<WhiteboardObject | null>(null);
-  const eraserIdRef = useRef<string | null>(null);
-  const eraserObjectRef = useRef<WhiteboardObject | null>(null);
-  const lastEraserSyncRef = useRef(0);
+  const eraserActiveRef = useRef(false);
+  const eraserLastPointRef = useRef<Point | null>(null);
   const lastCursorSyncRef = useRef(0);
   const lastInteractionSyncRef = useRef(0);
   const lastDrawingSyncRef = useRef(0);
@@ -665,67 +665,42 @@ function BoardPage({ initialCredentials, onLeaveRoom }: BoardPageProps) {
   const startErasing = (stage: Konva.Stage) => {
     const position = stage.getPointerPosition();
     if (!position) return;
-    const eraser: WhiteboardObject = {
-      id: crypto.randomUUID(),
-      type: "eraser",
-      x: 0,
-      y: 0,
-      points: [position.x, position.y],
-      strokeWidth: eraserSize,
-      version: 1,
-    };
-
-    eraserIdRef.current = eraser.id;
-    eraserObjectRef.current = eraser;
-    lastEraserSyncRef.current = 0;
+    eraserActiveRef.current = true;
+    eraserLastPointRef.current = position;
     setEraserPosition(position);
     setSelectedId(null);
-    commitObjects((current) => [...current, eraser]);
-    emitObjectCreate(eraser);
+    eraseAt(position, position);
+  };
+
+  const eraseAt = (from: Point, to: Point) => {
+    const strokes = objectsRef.current.filter((object) => object.type === "stroke");
+
+    for (const stroke of strokes) {
+      const segments = eraseStrokeAlongPath(stroke, from, to, eraserSize);
+      if (!segments) continue;
+
+      if (segments.length === 0) {
+        deleteObject(stroke.id);
+      } else {
+        updateObject(stroke.id, { segments });
+      }
+    }
   };
 
   const continueErasing = (stage: Konva.Stage) => {
-    const id = eraserIdRef.current;
-    const currentEraser = eraserObjectRef.current;
     const position = stage.getPointerPosition();
     if (!position) return;
 
     setEraserPosition(position);
-    if (!id || !currentEraser) return;
-
-    let nextEraser: WhiteboardObject = {
-      ...currentEraser,
-      points: [...(currentEraser.points ?? []), position.x, position.y],
-    };
-    const now = performance.now();
-    if (now - lastEraserSyncRef.current >= 50) {
-      nextEraser = { ...nextEraser, version: nextEraser.version + 1 };
-      lastEraserSyncRef.current = now;
-      emitObjectUpdate(nextEraser);
-    }
-
-    eraserObjectRef.current = nextEraser;
-    commitObjects((current) =>
-      current.map((object) => object.id === id ? nextEraser : object),
-    );
+    const previous = eraserLastPointRef.current;
+    if (!eraserActiveRef.current || !previous) return;
+    eraseAt(previous, position);
+    eraserLastPointRef.current = position;
   };
 
   const finishErasing = () => {
-    const id = eraserIdRef.current;
-    const currentEraser = eraserObjectRef.current;
-    if (!id || !currentEraser) return;
-
-    const finishedEraser = {
-      ...currentEraser,
-      version: currentEraser.version + 1,
-    };
-    eraserIdRef.current = null;
-    eraserObjectRef.current = null;
-    lastEraserSyncRef.current = 0;
-    commitObjects((current) =>
-      current.map((object) => object.id === id ? finishedEraser : object),
-    );
-    emitObjectUpdate(finishedEraser);
+    eraserActiveRef.current = false;
+    eraserLastPointRef.current = null;
   };
 
   const renderObject = (object: WhiteboardObject) => (

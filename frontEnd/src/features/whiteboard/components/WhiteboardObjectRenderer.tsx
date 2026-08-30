@@ -1,5 +1,5 @@
 import type Konva from "konva";
-import { Ellipse, Line, Rect, Text } from "react-konva";
+import { Ellipse, Group, Line, Rect, Text } from "react-konva";
 import type { Tool, WhiteboardObject } from "../../../types";
 
 type WhiteboardObjectRendererProps = {
@@ -123,36 +123,27 @@ function WhiteboardObjectRenderer({
   }
 
   if (object.type === "stroke") {
+    const segments = object.segments ?? [object.points ?? []];
     return (
-      <Line
-        {...shared}
-        points={object.points ?? []}
-        stroke={object.color ?? "#202431"}
-        strokeWidth={object.strokeWidth ?? 5}
-        lineCap="round"
-        lineJoin="round"
-        tension={0.25}
-        hitStrokeWidth={Math.max(12, object.strokeWidth ?? 5)}
-      />
+      <Group {...shared}>
+        {segments.map((points, index) => (
+          <Line
+            key={index}
+            points={points}
+            stroke={object.color ?? "#202431"}
+            strokeWidth={object.strokeWidth ?? 5}
+            lineCap="round"
+            lineJoin="round"
+            tension={0.25}
+            hitStrokeWidth={Math.max(12, object.strokeWidth ?? 5)}
+          />
+        ))}
+      </Group>
     );
   }
 
   if (object.type === "eraser") {
-    return (
-      <Line
-        id={object.id}
-        x={object.x}
-        y={object.y}
-        points={object.points ?? []}
-        stroke="#000000"
-        strokeWidth={object.strokeWidth ?? 32}
-        lineCap="round"
-        lineJoin="round"
-        tension={0.25}
-        globalCompositeOperation="destination-out"
-        listening={false}
-      />
-    );
+    return null;
   }
 
   return null;

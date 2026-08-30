@@ -10,6 +10,7 @@ export type WhiteboardObject = {
   rotation?: number;
   text?: string;
   points?: number[];
+  segments?: number[][];
   color?: string;
   strokeWidth?: number;
   version: number;
