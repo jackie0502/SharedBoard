@@ -63,7 +63,10 @@ test("Room 只接受版本較新的更新", () => {
     assert.deepEqual(room.getSnapshot(), [updated]);
     assert.throws(
         () => room.updateObject(rectangle({ version: 2 })),
-        /更新版本過舊，目前版本為 2/,
+        (error) =>
+            error instanceof DomainError &&
+            error.message === "更新版本過舊，目前版本為 2" &&
+            error.details.currentObject === updated,
     );
 });
 
