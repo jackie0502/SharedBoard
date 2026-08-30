@@ -2,6 +2,11 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import type Konva from "konva";
 import BoardLayout from "../../layouts/BoardLayout";
 import type { ConnectionStatus } from "../../features/room/types";
+import {
+  saveActiveRoom,
+  saveLastRoom,
+  type RoomCredentials,
+} from "../../features/room/storage";
 import BoardCanvas from "../../features/whiteboard/components/BoardCanvas";
 import BoardHeader from "../../features/whiteboard/components/BoardHeader";
 import ObjectInspector from "../../features/whiteboard/components/ObjectInspector";
@@ -20,11 +25,6 @@ type JoinResponse = {
   message: string;
 };
 
-type RoomCredentials = {
-  roomId: string;
-  userName: string;
-};
-
 type ObjectCreateResponse = {
   success: boolean;
   message: string;
@@ -36,22 +36,12 @@ type ObjectDeleteResponse = ObjectCreateResponse & {
 
 type Point = { x: number; y: number };
 
-const ROOM_STORAGE_KEY = "sharedboard:last-room";
-
-const loadStoredCredentials = (): RoomCredentials | null => {
-  try {
-    const saved = window.localStorage.getItem(ROOM_STORAGE_KEY);
-    if (!saved) return null;
-    const credentials = JSON.parse(saved) as Partial<RoomCredentials>;
-    return typeof credentials.roomId === "string" && typeof credentials.userName === "string"
-      ? { roomId: credentials.roomId, userName: credentials.userName }
-      : null;
-  } catch {
-    return null;
-  }
+type BoardPageProps = {
+  initialCredentials: RoomCredentials;
+  onLeaveRoom: () => void;
 };
 
-function BoardPage() {
+function BoardPage({ initialCredentials, onLeaveRoom }: BoardPageProps) {
   const containerRef = useRef<HTMLDivElement>(null);
   const drawingIdRef = useRef<string | null>(null);
   const drawingObjectRef = useRef<WhiteboardObject | null>(null);
@@ -65,7 +55,7 @@ function BoardPage() {
   const shapeStartRef = useRef<{ x: number; y: number } | null>(null);
   const shapeDraftRef = useRef<WhiteboardObject | null>(null);
   const objectsRef = useRef<WhiteboardObject[]>([]);
-  const joinedCredentialsRef = useRef<RoomCredentials | null>(loadStoredCredentials());
+  const joinedCredentialsRef = useRef<RoomCredentials | null>(initialCredentials);
   const stageSize = useStageSize(containerRef);
   const [tool, setTool] = useState<Tool>("select");
   const [objects, setObjects] = useState<WhiteboardObject[]>([]);
@@ -77,10 +67,10 @@ function BoardPage() {
   const [connectionStatus, setConnectionStatus] = useState<ConnectionStatus>("connecting");
   const [socketId, setSocketId] = useState<string | null>(null);
   const [userName, setUserName] = useState(
-    joinedCredentialsRef.current?.userName ?? "Person B",
+    initialCredentials.userName,
   );
   const [roomId, setRoomId] = useState(
-    joinedCredentialsRef.current?.roomId ?? "room-001",
+    initialCredentials.roomId,
   );
   const [joinedRoomId, setJoinedRoomId] = useState<string | null>(null);
   const [joinedUserName, setJoinedUserName] = useState<string | null>(null);
@@ -107,7 +97,8 @@ function BoardPage() {
     }
 
     joinedCredentialsRef.current = credentials;
-    window.localStorage.setItem(ROOM_STORAGE_KEY, JSON.stringify(credentials));
+    saveLastRoom(credentials);
+    saveActiveRoom(credentials);
     setUserName(credentials.userName);
     setRoomId(credentials.roomId);
     setJoinedRoomId(credentials.roomId);
@@ -665,6 +656,7 @@ function BoardPage() {
           joinedRoomId={joinedRoomId}
           roomMessage={roomMessage}
           objectCount={objects.filter((object) => object.type !== "eraser").length}
+          onLeaveRoom={onLeaveRoom}
           onUserNameChange={setUserName}
           onRoomIdChange={setRoomId}
           onJoinRoom={handleJoinRoom}

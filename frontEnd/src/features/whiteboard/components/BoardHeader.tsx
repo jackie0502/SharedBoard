@@ -13,6 +13,7 @@ type BoardHeaderProps = {
   onUserNameChange: (value: string) => void;
   onRoomIdChange: (value: string) => void;
   onJoinRoom: React.FormEventHandler<HTMLFormElement>;
+  onLeaveRoom: () => void;
 };
 
 function BoardHeader(props: BoardHeaderProps) {
@@ -23,7 +24,12 @@ function BoardHeader(props: BoardHeaderProps) {
         <span>SharedBoard</span>
       </div>
       <RoomControls {...props} />
-      <div className="object-count">{props.objectCount} 個物件</div>
+      <div className="header-actions">
+        <span className="object-count">{props.objectCount} 個物件</span>
+        <button className="leave-room-button" type="button" onClick={props.onLeaveRoom}>
+          返回首頁
+        </button>
+      </div>
     </header>
   );
 }
