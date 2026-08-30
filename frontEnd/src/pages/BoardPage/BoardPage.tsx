@@ -1,7 +1,12 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import type Konva from "konva";
 import BoardLayout from "../../layouts/BoardLayout";
-import type { ConnectionStatus, RoomMember } from "../../features/room/types";
+import type {
+  ConnectionStatus,
+  RemoteCursor,
+  RemoteInteraction,
+  RoomMember,
+} from "../../features/room/types";
 import {
   saveActiveRoom,
   saveLastRoom,
@@ -53,6 +58,8 @@ function BoardPage({ initialCredentials, onLeaveRoom }: BoardPageProps) {
   const eraserIdRef = useRef<string | null>(null);
   const eraserObjectRef = useRef<WhiteboardObject | null>(null);
   const lastEraserSyncRef = useRef(0);
+  const lastCursorSyncRef = useRef(0);
+  const lastInteractionSyncRef = useRef(0);
   const lastDrawingSyncRef = useRef(0);
   const lastDragSyncRef = useRef<Map<string, number>>(new Map());
   const lastTransformSyncRef = useRef<Map<string, number>>(new Map());
@@ -81,6 +88,8 @@ function BoardPage({ initialCredentials, onLeaveRoom }: BoardPageProps) {
   const [joinedUserName, setJoinedUserName] = useState<string | null>(null);
   const [roomMessage, setRoomMessage] = useState("請加入一個房間");
   const [roomMembers, setRoomMembers] = useState<RoomMember[]>([]);
+  const [remoteCursors, setRemoteCursors] = useState<Record<string, RemoteCursor>>({});
+  const [remoteInteractions, setRemoteInteractions] = useState<Record<string, RemoteInteraction>>({});
 
   const selectedObject = objects.find((object) => object.id === selectedId);
 
@@ -110,6 +119,8 @@ function BoardPage({ initialCredentials, onLeaveRoom }: BoardPageProps) {
     setJoinedRoomId(credentials.roomId);
     setJoinedUserName(credentials.userName);
     setSelectedId(null);
+    setRemoteCursors({});
+    setRemoteInteractions({});
     commitObjects(() => response.objects ?? []);
     setRoomMembers(response.users ?? []);
     setRoomMessage(message);
@@ -132,6 +143,8 @@ function BoardPage({ initialCredentials, onLeaveRoom }: BoardPageProps) {
       setConnectionStatus("disconnected");
       setSocketId(null);
       setRoomMembers([]);
+      setRemoteCursors({});
+      setRemoteInteractions({});
       if (joinedCredentialsRef.current) setRoomMessage("連線中斷，等待自動重新加入");
     };
 
@@ -160,13 +173,53 @@ function BoardPage({ initialCredentials, onLeaveRoom }: BoardPageProps) {
       setRoomMessage(`${data.userName} 加入了房間`);
     };
 
-    const handleUserLeft = (data: { userName: string }) => {
+    const handleUserLeft = (data: { socketId: string; userName: string }) => {
       setRoomMessage(`${data.userName} 離開了房間`);
+      setRemoteCursors((current) => {
+        const next = { ...current };
+        delete next[data.socketId];
+        return next;
+      });
+      setRemoteInteractions((current) => {
+        const next = { ...current };
+        delete next[data.socketId];
+        return next;
+      });
     };
 
     const handleRoomUsers = (data: { roomId: string; users: RoomMember[] }) => {
       if (data.roomId !== joinedCredentialsRef.current?.roomId) return;
       setRoomMembers(data.users);
+    };
+
+    const handleCursorMove = (data: Omit<RemoteCursor, "updatedAt">) => {
+      setRemoteCursors((current) => ({
+        ...current,
+        [data.socketId]: { ...data, updatedAt: Date.now() },
+      }));
+    };
+
+    const handleCursorHide = (data: { socketId: string }) => {
+      setRemoteCursors((current) => {
+        const next = { ...current };
+        delete next[data.socketId];
+        return next;
+      });
+    };
+
+    const handleInteractionUpdate = (data: Omit<RemoteInteraction, "updatedAt">) => {
+      setRemoteInteractions((current) => ({
+        ...current,
+        [data.socketId]: { ...data, updatedAt: Date.now() },
+      }));
+    };
+
+    const handleInteractionHide = (data: { socketId: string }) => {
+      setRemoteInteractions((current) => {
+        const next = { ...current };
+        delete next[data.socketId];
+        return next;
+      });
     };
 
     const handleObjectCreate = (data: { object: WhiteboardObject; userName: string }) => {
@@ -194,12 +247,19 @@ function BoardPage({ initialCredentials, onLeaveRoom }: BoardPageProps) {
         current.filter((object) => object.id !== data.objectId),
       );
       setSelectedId((current) => current === data.objectId ? null : current);
+      setRemoteInteractions((current) => Object.fromEntries(
+        Object.entries(current).filter(([, interaction]) => interaction.objectId !== data.objectId),
+      ));
       setRoomMessage(`${data.userName} 刪除了一個物件`);
     };
 
     socket.on("user:joined", handleUserJoined);
     socket.on("user:left", handleUserLeft);
     socket.on("room:users", handleRoomUsers);
+    socket.on("cursor:move", handleCursorMove);
+    socket.on("cursor:hide", handleCursorHide);
+    socket.on("interaction:update", handleInteractionUpdate);
+    socket.on("interaction:hide", handleInteractionHide);
     socket.on("object:create", handleObjectCreate);
     socket.on("object:update", handleObjectUpdate);
     socket.on("object:delete", handleObjectDelete);
@@ -208,11 +268,46 @@ function BoardPage({ initialCredentials, onLeaveRoom }: BoardPageProps) {
       socket.off("user:joined", handleUserJoined);
       socket.off("user:left", handleUserLeft);
       socket.off("room:users", handleRoomUsers);
+      socket.off("cursor:move", handleCursorMove);
+      socket.off("cursor:hide", handleCursorHide);
+      socket.off("interaction:update", handleInteractionUpdate);
+      socket.off("interaction:hide", handleInteractionHide);
       socket.off("object:create", handleObjectCreate);
       socket.off("object:update", handleObjectUpdate);
       socket.off("object:delete", handleObjectDelete);
     };
   }, [commitObjects]);
+
+  useEffect(() => {
+    const timer = window.setInterval(() => {
+      const staleBefore = Date.now() - 5000;
+      setRemoteCursors((current) => Object.fromEntries(
+        Object.entries(current).filter(([, cursor]) => cursor.updatedAt >= staleBefore),
+      ));
+      setRemoteInteractions((current) => Object.fromEntries(
+        Object.entries(current).filter(([, interaction]) => interaction.updatedAt >= staleBefore),
+      ));
+    }, 2000);
+
+    return () => window.clearInterval(timer);
+  }, []);
+
+  const emitInteraction = useCallback((
+    objectId: string | null,
+    preview: WhiteboardObject | null = null,
+    isDraft = false,
+  ) => {
+    if (!joinedCredentialsRef.current || !socket.connected) return;
+    if (!objectId && !preview) {
+      socket.emit("interaction:hide");
+      return;
+    }
+    socket.emit("interaction:update", { objectId, preview, isDraft });
+  }, []);
+
+  useEffect(() => {
+    emitInteraction(selectedId);
+  }, [selectedId, emitInteraction]);
 
   const handleJoinRoom = (event: React.FormEvent<HTMLFormElement>) => {
     event.preventDefault();
@@ -456,6 +551,8 @@ function BoardPage({ initialCredentials, onLeaveRoom }: BoardPageProps) {
     shapeDraftRef.current = draft;
     setSelectedId(null);
     commitObjects((current) => [...current, draft]);
+    lastInteractionSyncRef.current = 0;
+    emitInteraction(draft.id, draft, true);
   };
 
   const continueShapePlacement = (stage: Konva.Stage) => {
@@ -476,6 +573,11 @@ function BoardPage({ initialCredentials, onLeaveRoom }: BoardPageProps) {
     commitObjects((current) =>
       current.map((object) => object.id === draft.id ? nextDraft : object),
     );
+    const now = performance.now();
+    if (now - lastInteractionSyncRef.current >= 50) {
+      lastInteractionSyncRef.current = now;
+      emitInteraction(nextDraft.id, nextDraft, true);
+    }
   };
 
   const finishShapePlacement = () => {
@@ -490,6 +592,7 @@ function BoardPage({ initialCredentials, onLeaveRoom }: BoardPageProps) {
 
     shapeStartRef.current = null;
     shapeDraftRef.current = null;
+    lastInteractionSyncRef.current = 0;
     commitObjects((current) =>
       current.map((object) => object.id === draft.id ? finishedShape : object),
     );
@@ -631,7 +734,11 @@ function BoardPage({ initialCredentials, onLeaveRoom }: BoardPageProps) {
       object={object}
       tool={tool}
       onSelect={setSelectedId}
-      onDragStart={(id) => lastDragSyncRef.current.delete(id)}
+      onDragStart={(id) => {
+        lastDragSyncRef.current.delete(id);
+        setSelectedId(id);
+        emitInteraction(id);
+      }}
       onPositionChange={syncObjectPosition}
       onTransformStart={startObjectTransform}
       onTransform={syncObjectTransform}
@@ -660,6 +767,18 @@ function BoardPage({ initialCredentials, onLeaveRoom }: BoardPageProps) {
   };
 
   const handleCanvasPointerMove = (stage: Konva.Stage) => {
+    const cursorPosition = stage.getPointerPosition();
+    const now = performance.now();
+    if (
+      cursorPosition &&
+      joinedCredentialsRef.current &&
+      socket.connected &&
+      now - lastCursorSyncRef.current >= 50
+    ) {
+      lastCursorSyncRef.current = now;
+      socket.emit("cursor:move", cursorPosition);
+    }
+
     if (tool === "eraser") {
       continueErasing(stage);
       return;
@@ -672,6 +791,11 @@ function BoardPage({ initialCredentials, onLeaveRoom }: BoardPageProps) {
     finishErasing();
     finishDrawing();
     finishShapePlacement();
+  };
+
+  const handleCanvasPointerLeave = () => {
+    lastCursorSyncRef.current = 0;
+    if (joinedCredentialsRef.current && socket.connected) socket.emit("cursor:hide");
   };
 
   useKeyboardShortcuts({
@@ -726,10 +850,13 @@ function BoardPage({ initialCredentials, onLeaveRoom }: BoardPageProps) {
           selectedObject={selectedObject}
           eraserSize={eraserSize}
           eraserPosition={eraserPosition}
+          remoteCursors={Object.values(remoteCursors)}
+          remoteInteractions={Object.values(remoteInteractions)}
           renderObject={renderObject}
           onPointerDown={handleCanvasPointerDown}
           onPointerMove={handleCanvasPointerMove}
           onPointerUp={handleCanvasPointerUp}
+          onPointerLeave={handleCanvasPointerLeave}
         />
       )}
       inspector={(

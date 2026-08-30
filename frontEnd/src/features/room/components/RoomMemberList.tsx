@@ -1,18 +1,10 @@
 import type { RoomMember } from "../types";
+import { memberColor, memberInitial } from "../memberAppearance";
 
 type RoomMemberListProps = {
   members: RoomMember[];
   currentSocketId: string | null;
 };
-
-const MEMBER_COLORS = ["#7657ed", "#0ea5e9", "#16a34a", "#ea580c", "#db2777"];
-
-const memberColor = (socketId: string) => {
-  const hash = Array.from(socketId).reduce((total, character) => total + character.charCodeAt(0), 0);
-  return MEMBER_COLORS[hash % MEMBER_COLORS.length];
-};
-
-const memberInitial = (name: string) => name.trim().charAt(0).toUpperCase() || "?";
 
 function RoomMemberList({ members, currentSocketId }: RoomMemberListProps) {
   if (members.length === 0) return null;
