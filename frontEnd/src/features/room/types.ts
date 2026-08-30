@@ -10,3 +10,10 @@ export type RemoteCursor = RoomMember & {
   y: number;
   updatedAt: number;
 };
+
+export type RemoteInteraction = RoomMember & {
+  objectId: string | null;
+  preview: import("../../types").WhiteboardObject | null;
+  isDraft: boolean;
+  updatedAt: number;
+};

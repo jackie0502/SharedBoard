@@ -99,3 +99,57 @@ test("Gateway 只會向同房間其他使用者廣播有效游標座標", () => 
         },
     }]);
 });
+
+test("Gateway 會廣播選取狀態與正在建立的圖形預覽", () => {
+    const io = createIo();
+    const service = { getSnapshot: () => [] };
+    const logger = { log: () => {}, error: () => {} };
+    const gateway = new WhiteboardGateway(io, service, logger);
+    const alice = createSocket("socket-a");
+    let response;
+
+    gateway.handleRoomJoin(alice, { roomId: "room-1", userName: "Alice" }, () => {});
+    alice.events.length = 0;
+    gateway.handleInteractionUpdate(alice, {
+        objectId: "shape-1",
+        isDraft: true,
+        preview: {
+            id: "shape-1",
+            type: "circle",
+            x: 20,
+            y: 30,
+            width: 80,
+            height: 60,
+            color: "#22c55e",
+            version: 1,
+        },
+    }, (data) => { response = data; });
+
+    assert.deepEqual(response, { success: true });
+    assert.equal(alice.events[0].event, "interaction:update");
+    assert.equal(alice.events[0].data.userName, "Alice");
+    assert.equal(alice.events[0].data.preview.type, "circle");
+
+    gateway.handleInteractionHide(alice);
+    assert.deepEqual(alice.events.at(-1), {
+        roomId: "room-1",
+        event: "interaction:hide",
+        data: { socketId: "socket-a" },
+    });
+});
+
+test("Gateway 會拒絕無效的圖形預覽", () => {
+    const gateway = new WhiteboardGateway(createIo(), { getSnapshot: () => [] }, {
+        log: () => {}, error: () => {},
+    });
+    const alice = createSocket("socket-a");
+    let response;
+    gateway.handleRoomJoin(alice, { roomId: "room-1", userName: "Alice" }, () => {});
+
+    gateway.handleInteractionUpdate(alice, {
+        objectId: "shape-1",
+        preview: { id: "shape-1", type: "circle", x: "bad", y: 0, width: 10, height: 10 },
+    }, (data) => { response = data; });
+
+    assert.equal(response.success, false);
+});

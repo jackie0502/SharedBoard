@@ -4,6 +4,7 @@ import BoardLayout from "../../layouts/BoardLayout";
 import type {
   ConnectionStatus,
   RemoteCursor,
+  RemoteInteraction,
   RoomMember,
 } from "../../features/room/types";
 import {
@@ -58,6 +59,7 @@ function BoardPage({ initialCredentials, onLeaveRoom }: BoardPageProps) {
   const eraserObjectRef = useRef<WhiteboardObject | null>(null);
   const lastEraserSyncRef = useRef(0);
   const lastCursorSyncRef = useRef(0);
+  const lastInteractionSyncRef = useRef(0);
   const lastDrawingSyncRef = useRef(0);
   const lastDragSyncRef = useRef<Map<string, number>>(new Map());
   const lastTransformSyncRef = useRef<Map<string, number>>(new Map());
@@ -87,6 +89,7 @@ function BoardPage({ initialCredentials, onLeaveRoom }: BoardPageProps) {
   const [roomMessage, setRoomMessage] = useState("請加入一個房間");
   const [roomMembers, setRoomMembers] = useState<RoomMember[]>([]);
   const [remoteCursors, setRemoteCursors] = useState<Record<string, RemoteCursor>>({});
+  const [remoteInteractions, setRemoteInteractions] = useState<Record<string, RemoteInteraction>>({});
 
   const selectedObject = objects.find((object) => object.id === selectedId);
 
@@ -117,6 +120,7 @@ function BoardPage({ initialCredentials, onLeaveRoom }: BoardPageProps) {
     setJoinedUserName(credentials.userName);
     setSelectedId(null);
     setRemoteCursors({});
+    setRemoteInteractions({});
     commitObjects(() => response.objects ?? []);
     setRoomMembers(response.users ?? []);
     setRoomMessage(message);
@@ -140,6 +144,7 @@ function BoardPage({ initialCredentials, onLeaveRoom }: BoardPageProps) {
       setSocketId(null);
       setRoomMembers([]);
       setRemoteCursors({});
+      setRemoteInteractions({});
       if (joinedCredentialsRef.current) setRoomMessage("連線中斷，等待自動重新加入");
     };
 
@@ -175,6 +180,11 @@ function BoardPage({ initialCredentials, onLeaveRoom }: BoardPageProps) {
         delete next[data.socketId];
         return next;
       });
+      setRemoteInteractions((current) => {
+        const next = { ...current };
+        delete next[data.socketId];
+        return next;
+      });
     };
 
     const handleRoomUsers = (data: { roomId: string; users: RoomMember[] }) => {
@@ -191,6 +201,21 @@ function BoardPage({ initialCredentials, onLeaveRoom }: BoardPageProps) {
 
     const handleCursorHide = (data: { socketId: string }) => {
       setRemoteCursors((current) => {
+        const next = { ...current };
+        delete next[data.socketId];
+        return next;
+      });
+    };
+
+    const handleInteractionUpdate = (data: Omit<RemoteInteraction, "updatedAt">) => {
+      setRemoteInteractions((current) => ({
+        ...current,
+        [data.socketId]: { ...data, updatedAt: Date.now() },
+      }));
+    };
+
+    const handleInteractionHide = (data: { socketId: string }) => {
+      setRemoteInteractions((current) => {
         const next = { ...current };
         delete next[data.socketId];
         return next;
@@ -222,6 +247,9 @@ function BoardPage({ initialCredentials, onLeaveRoom }: BoardPageProps) {
         current.filter((object) => object.id !== data.objectId),
       );
       setSelectedId((current) => current === data.objectId ? null : current);
+      setRemoteInteractions((current) => Object.fromEntries(
+        Object.entries(current).filter(([, interaction]) => interaction.objectId !== data.objectId),
+      ));
       setRoomMessage(`${data.userName} 刪除了一個物件`);
     };
 
@@ -230,6 +258,8 @@ function BoardPage({ initialCredentials, onLeaveRoom }: BoardPageProps) {
     socket.on("room:users", handleRoomUsers);
     socket.on("cursor:move", handleCursorMove);
     socket.on("cursor:hide", handleCursorHide);
+    socket.on("interaction:update", handleInteractionUpdate);
+    socket.on("interaction:hide", handleInteractionHide);
     socket.on("object:create", handleObjectCreate);
     socket.on("object:update", handleObjectUpdate);
     socket.on("object:delete", handleObjectDelete);
@@ -240,6 +270,8 @@ function BoardPage({ initialCredentials, onLeaveRoom }: BoardPageProps) {
       socket.off("room:users", handleRoomUsers);
       socket.off("cursor:move", handleCursorMove);
       socket.off("cursor:hide", handleCursorHide);
+      socket.off("interaction:update", handleInteractionUpdate);
+      socket.off("interaction:hide", handleInteractionHide);
       socket.off("object:create", handleObjectCreate);
       socket.off("object:update", handleObjectUpdate);
       socket.off("object:delete", handleObjectDelete);
@@ -252,10 +284,30 @@ function BoardPage({ initialCredentials, onLeaveRoom }: BoardPageProps) {
       setRemoteCursors((current) => Object.fromEntries(
         Object.entries(current).filter(([, cursor]) => cursor.updatedAt >= staleBefore),
       ));
+      setRemoteInteractions((current) => Object.fromEntries(
+        Object.entries(current).filter(([, interaction]) => interaction.updatedAt >= staleBefore),
+      ));
     }, 2000);
 
     return () => window.clearInterval(timer);
   }, []);
+
+  const emitInteraction = useCallback((
+    objectId: string | null,
+    preview: WhiteboardObject | null = null,
+    isDraft = false,
+  ) => {
+    if (!joinedCredentialsRef.current || !socket.connected) return;
+    if (!objectId && !preview) {
+      socket.emit("interaction:hide");
+      return;
+    }
+    socket.emit("interaction:update", { objectId, preview, isDraft });
+  }, []);
+
+  useEffect(() => {
+    emitInteraction(selectedId);
+  }, [selectedId, emitInteraction]);
 
   const handleJoinRoom = (event: React.FormEvent<HTMLFormElement>) => {
     event.preventDefault();
@@ -499,6 +551,8 @@ function BoardPage({ initialCredentials, onLeaveRoom }: BoardPageProps) {
     shapeDraftRef.current = draft;
     setSelectedId(null);
     commitObjects((current) => [...current, draft]);
+    lastInteractionSyncRef.current = 0;
+    emitInteraction(draft.id, draft, true);
   };
 
   const continueShapePlacement = (stage: Konva.Stage) => {
@@ -519,6 +573,11 @@ function BoardPage({ initialCredentials, onLeaveRoom }: BoardPageProps) {
     commitObjects((current) =>
       current.map((object) => object.id === draft.id ? nextDraft : object),
     );
+    const now = performance.now();
+    if (now - lastInteractionSyncRef.current >= 50) {
+      lastInteractionSyncRef.current = now;
+      emitInteraction(nextDraft.id, nextDraft, true);
+    }
   };
 
   const finishShapePlacement = () => {
@@ -533,6 +592,7 @@ function BoardPage({ initialCredentials, onLeaveRoom }: BoardPageProps) {
 
     shapeStartRef.current = null;
     shapeDraftRef.current = null;
+    lastInteractionSyncRef.current = 0;
     commitObjects((current) =>
       current.map((object) => object.id === draft.id ? finishedShape : object),
     );
@@ -674,7 +734,11 @@ function BoardPage({ initialCredentials, onLeaveRoom }: BoardPageProps) {
       object={object}
       tool={tool}
       onSelect={setSelectedId}
-      onDragStart={(id) => lastDragSyncRef.current.delete(id)}
+      onDragStart={(id) => {
+        lastDragSyncRef.current.delete(id);
+        setSelectedId(id);
+        emitInteraction(id);
+      }}
       onPositionChange={syncObjectPosition}
       onTransformStart={startObjectTransform}
       onTransform={syncObjectTransform}
@@ -787,6 +851,7 @@ function BoardPage({ initialCredentials, onLeaveRoom }: BoardPageProps) {
           eraserSize={eraserSize}
           eraserPosition={eraserPosition}
           remoteCursors={Object.values(remoteCursors)}
+          remoteInteractions={Object.values(remoteInteractions)}
           renderObject={renderObject}
           onPointerDown={handleCanvasPointerDown}
           onPointerMove={handleCanvasPointerMove}

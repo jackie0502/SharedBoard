@@ -7,6 +7,8 @@ const SOCKET_EVENTS = Object.freeze({
     ROOM_USERS: "room:users",
     CURSOR_MOVE: "cursor:move",
     CURSOR_HIDE: "cursor:hide",
+    INTERACTION_UPDATE: "interaction:update",
+    INTERACTION_HIDE: "interaction:hide",
     OBJECT_CREATE: "object:create",
     OBJECT_UPDATE: "object:update",
     OBJECT_DELETE: "object:delete",

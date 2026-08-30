@@ -4,8 +4,9 @@ import { Circle, Layer, Stage, Transformer } from "react-konva";
 import type { Tool, WhiteboardObject } from "../../../types";
 import { getToolLabel } from "../constants/tools";
 import type { StageSize } from "../hooks/useStageSize";
-import type { RemoteCursor } from "../../room/types";
+import type { RemoteCursor, RemoteInteraction } from "../../room/types";
 import RemoteCursors from "./RemoteCursors";
+import RemoteInteractions from "./RemoteInteractions";
 
 type BoardCanvasProps = {
   containerRef: RefObject<HTMLDivElement | null>;
@@ -17,6 +18,7 @@ type BoardCanvasProps = {
   eraserSize: number;
   eraserPosition: { x: number; y: number } | null;
   remoteCursors: RemoteCursor[];
+  remoteInteractions: RemoteInteraction[];
   renderObject: (object: WhiteboardObject) => ReactNode;
   onPointerDown: (stage: Konva.Stage) => void;
   onPointerMove: (stage: Konva.Stage) => void;
@@ -34,6 +36,7 @@ function BoardCanvas({
   eraserSize,
   eraserPosition,
   remoteCursors,
+  remoteInteractions,
   renderObject,
   onPointerDown,
   onPointerMove,
@@ -98,6 +101,7 @@ function BoardCanvas({
             .map(renderObject)}
         </Layer>
         <Layer listening={false}>
+          <RemoteInteractions interactions={remoteInteractions} objects={objects} />
           <RemoteCursors cursors={remoteCursors} />
           {tool === "eraser" && eraserPosition && (
             <Circle
