@@ -9,6 +9,7 @@ class WhiteboardGateway {
         this.io = io;
         this.whiteboardService = whiteboardService;
         this.logger = logger;
+        this.membersByRoom = new Map();
     }
 
     register() {
@@ -48,11 +49,13 @@ class WhiteboardGateway {
 
         if (isSameMembership) {
             const objects = this.whiteboardService.getSnapshot(roomId);
+            this.addRoomMember(roomId, socket.id, userName);
             respond({
                 success: true,
                 roomId,
                 socketId: socket.id,
                 objects,
+                users: this.getRoomMembers(roomId),
                 message: `已在房間 ${roomId}`,
             });
             return;
@@ -60,21 +63,25 @@ class WhiteboardGateway {
 
         if (previousRoomId) {
             socket.leave(previousRoomId);
+            this.removeRoomMember(previousRoomId, socket.id);
             socket.to(previousRoomId).emit(SOCKET_EVENTS.USER_LEFT, {
                 socketId: socket.id,
                 userName: previousUserName,
             });
+            this.emitRoomUsers(previousRoomId);
         }
 
         socket.data.roomId = roomId;
         socket.data.userName = userName;
         socket.join(roomId);
+        this.addRoomMember(roomId, socket.id, userName);
 
         this.logger.log(`${userName} 加入房間：${roomId}`);
         socket.to(roomId).emit(SOCKET_EVENTS.USER_JOINED, {
             socketId: socket.id,
             userName,
         });
+        this.emitRoomUsers(roomId);
 
         const objects = this.whiteboardService.getSnapshot(roomId);
         respond({
@@ -82,6 +89,7 @@ class WhiteboardGateway {
             roomId,
             socketId: socket.id,
             objects,
+            users: this.getRoomMembers(roomId),
             message: `成功加入房間 ${roomId}，載入 ${objects.length} 個物件`,
         });
     }
@@ -164,10 +172,12 @@ class WhiteboardGateway {
         const { roomId, userName } = socket.data;
 
         if (roomId && userName) {
+            this.removeRoomMember(roomId, socket.id);
             socket.to(roomId).emit(SOCKET_EVENTS.USER_LEFT, {
                 socketId: socket.id,
                 userName,
             });
+            this.emitRoomUsers(roomId);
             this.logger.log(`${userName} 離開房間：${roomId}`);
         }
 
@@ -180,6 +190,32 @@ class WhiteboardGateway {
 
         respond({ success: false, message: "請先加入房間" });
         return null;
+    }
+
+    addRoomMember(roomId, socketId, userName) {
+        const members = this.membersByRoom.get(roomId) ?? new Map();
+        members.set(socketId, userName);
+        this.membersByRoom.set(roomId, members);
+    }
+
+    removeRoomMember(roomId, socketId) {
+        const members = this.membersByRoom.get(roomId);
+        if (!members) return;
+
+        members.delete(socketId);
+        if (members.size === 0) this.membersByRoom.delete(roomId);
+    }
+
+    getRoomMembers(roomId) {
+        const members = this.membersByRoom.get(roomId) ?? new Map();
+        return Array.from(members, ([socketId, userName]) => ({ socketId, userName }));
+    }
+
+    emitRoomUsers(roomId) {
+        this.io.to(roomId).emit(SOCKET_EVENTS.ROOM_USERS, {
+            roomId,
+            users: this.getRoomMembers(roomId),
+        });
     }
 
     respondWithError(error, respond) {
