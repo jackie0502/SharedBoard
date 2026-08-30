@@ -30,6 +30,10 @@ type ObjectCreateResponse = {
   message: string;
 };
 
+type ObjectUpdateResponse = ObjectCreateResponse & {
+  currentObject?: WhiteboardObject;
+};
+
 type ObjectDeleteResponse = ObjectCreateResponse & {
   currentObject?: WhiteboardObject;
 };
@@ -237,8 +241,30 @@ function BoardPage({ initialCredentials, onLeaveRoom }: BoardPageProps) {
     socket.emit(
       "object:update",
       { object },
-      (response: ObjectCreateResponse) => {
-        if (!response.success) setRoomMessage(response.message);
+      (response: ObjectUpdateResponse) => {
+        if (response.success) return;
+
+        const currentLocalObject = objectsRef.current.find(
+          (candidate) => candidate.id === object.id,
+        );
+        const canRestoreServerVersion =
+          response.currentObject && currentLocalObject?.version === object.version;
+
+        if (canRestoreServerVersion) {
+          commitObjects((current) =>
+            current.map((candidate) =>
+              candidate.id === object.id ? response.currentObject! : candidate,
+            ),
+          );
+          setRoomMessage("偵測到同步衝突，已恢復伺服器的最新版本");
+          return;
+        }
+
+        setRoomMessage(
+          response.currentObject
+            ? "偵測到同步衝突，正在等待較新的本機變更"
+            : response.message,
+        );
       },
     );
   };

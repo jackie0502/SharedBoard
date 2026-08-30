@@ -36,7 +36,10 @@ class Room {
         }
 
         if (object.version <= currentObject.version) {
-            throw new DomainError(`更新版本過舊，目前版本為 ${currentObject.version}`);
+            throw new DomainError(
+                `更新版本過舊，目前版本為 ${currentObject.version}`,
+                { currentObject },
+            );
         }
 
         this.#objects.set(object.id, object);
