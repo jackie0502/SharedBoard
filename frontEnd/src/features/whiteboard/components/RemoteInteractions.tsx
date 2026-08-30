@@ -9,9 +9,11 @@ type Props = {
 };
 
 function getBounds(object: WhiteboardObject) {
-  if (object.type === "stroke" && object.points?.length) {
-    const xs = object.points.filter((_, index) => index % 2 === 0);
-    const ys = object.points.filter((_, index) => index % 2 === 1);
+  if (object.type === "stroke") {
+    const points = (object.segments ?? [object.points ?? []]).flat();
+    if (points.length < 2) return { x: object.x, y: object.y, width: 8, height: 8 };
+    const xs = points.filter((_, index) => index % 2 === 0);
+    const ys = points.filter((_, index) => index % 2 === 1);
     const padding = (object.strokeWidth ?? 5) / 2;
     const minX = Math.min(...xs);
     const minY = Math.min(...ys);
