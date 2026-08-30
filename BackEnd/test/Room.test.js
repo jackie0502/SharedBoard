@@ -26,6 +26,23 @@ test("Room 建立物件後會出現在 Snapshot", () => {
     assert.deepEqual(room.getSnapshot(), [object]);
 });
 
+test("Room 接受橡皮擦軌跡並保存在 Snapshot", () => {
+    const room = new Room("room-1");
+    const eraser = {
+        id: "eraser-1",
+        type: "eraser",
+        x: 0,
+        y: 0,
+        points: [10, 20, 30, 40],
+        strokeWidth: 24,
+        version: 1,
+    };
+
+    room.createObject(eraser);
+
+    assert.deepEqual(room.getSnapshot(), [eraser]);
+});
+
 test("Room 不允許重複的物件 ID", () => {
     const room = new Room("room-1");
     room.createObject(rectangle());

@@ -13,6 +13,7 @@ export const TOOL_DEFINITIONS: ToolDefinition[] = [
   { tool: "circle", icon: "○", label: "圓形", shortcut: "C" },
   { tool: "text", icon: "T", label: "文字", shortcut: "T" },
   { tool: "draw", icon: "✎", label: "畫筆", shortcut: "P" },
+  { tool: "eraser", icon: "▱", label: "橡皮擦", shortcut: "E" },
 ];
 
 export const TOOL_SHORTCUTS: Record<string, Tool> = Object.fromEntries(

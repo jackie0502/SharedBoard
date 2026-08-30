@@ -6,7 +6,7 @@ type ObjectInspectorProps = {
 };
 
 const objectName = (type: WhiteboardObject["type"]) =>
-  ({ rect: "矩形", circle: "圓形", text: "文字", stroke: "筆畫" })[type];
+  ({ rect: "矩形", circle: "圓形", text: "文字", stroke: "筆畫", eraser: "擦除軌跡" })[type];
 
 function ObjectInspector({ selectedObject, onUpdateObject }: ObjectInspectorProps) {
   return (

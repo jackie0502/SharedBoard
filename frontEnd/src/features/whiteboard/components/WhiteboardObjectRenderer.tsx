@@ -137,6 +137,24 @@ function WhiteboardObjectRenderer({
     );
   }
 
+  if (object.type === "eraser") {
+    return (
+      <Line
+        id={object.id}
+        x={object.x}
+        y={object.y}
+        points={object.points ?? []}
+        stroke="#000000"
+        strokeWidth={object.strokeWidth ?? 32}
+        lineCap="round"
+        lineJoin="round"
+        tension={0.25}
+        globalCompositeOperation="destination-out"
+        listening={false}
+      />
+    );
+  }
+
   return null;
 }
 

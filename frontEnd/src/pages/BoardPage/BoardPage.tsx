@@ -34,6 +34,8 @@ type ObjectDeleteResponse = ObjectCreateResponse & {
   currentObject?: WhiteboardObject;
 };
 
+type Point = { x: number; y: number };
+
 const ROOM_STORAGE_KEY = "sharedboard:last-room";
 
 const loadStoredCredentials = (): RoomCredentials | null => {
@@ -53,6 +55,9 @@ function BoardPage() {
   const containerRef = useRef<HTMLDivElement>(null);
   const drawingIdRef = useRef<string | null>(null);
   const drawingObjectRef = useRef<WhiteboardObject | null>(null);
+  const eraserIdRef = useRef<string | null>(null);
+  const eraserObjectRef = useRef<WhiteboardObject | null>(null);
+  const lastEraserSyncRef = useRef(0);
   const lastDrawingSyncRef = useRef(0);
   const lastDragSyncRef = useRef<Map<string, number>>(new Map());
   const lastTransformSyncRef = useRef<Map<string, number>>(new Map());
@@ -67,6 +72,8 @@ function BoardPage() {
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const [drawColor, setDrawColor] = useState("#202431");
   const [drawWidth, setDrawWidth] = useState(5);
+  const [eraserSize, setEraserSize] = useState(32);
+  const [eraserPosition, setEraserPosition] = useState<Point | null>(null);
   const [connectionStatus, setConnectionStatus] = useState<ConnectionStatus>("connecting");
   const [socketId, setSocketId] = useState<string | null>(null);
   const [userName, setUserName] = useState(
@@ -524,6 +531,72 @@ function BoardPage() {
     emitObjectUpdate(finishedStroke);
   };
 
+  const startErasing = (stage: Konva.Stage) => {
+    const position = stage.getPointerPosition();
+    if (!position) return;
+    const eraser: WhiteboardObject = {
+      id: crypto.randomUUID(),
+      type: "eraser",
+      x: 0,
+      y: 0,
+      points: [position.x, position.y],
+      strokeWidth: eraserSize,
+      version: 1,
+    };
+
+    eraserIdRef.current = eraser.id;
+    eraserObjectRef.current = eraser;
+    lastEraserSyncRef.current = 0;
+    setEraserPosition(position);
+    setSelectedId(null);
+    commitObjects((current) => [...current, eraser]);
+    emitObjectCreate(eraser);
+  };
+
+  const continueErasing = (stage: Konva.Stage) => {
+    const id = eraserIdRef.current;
+    const currentEraser = eraserObjectRef.current;
+    const position = stage.getPointerPosition();
+    if (!position) return;
+
+    setEraserPosition(position);
+    if (!id || !currentEraser) return;
+
+    let nextEraser: WhiteboardObject = {
+      ...currentEraser,
+      points: [...(currentEraser.points ?? []), position.x, position.y],
+    };
+    const now = performance.now();
+    if (now - lastEraserSyncRef.current >= 50) {
+      nextEraser = { ...nextEraser, version: nextEraser.version + 1 };
+      lastEraserSyncRef.current = now;
+      emitObjectUpdate(nextEraser);
+    }
+
+    eraserObjectRef.current = nextEraser;
+    commitObjects((current) =>
+      current.map((object) => object.id === id ? nextEraser : object),
+    );
+  };
+
+  const finishErasing = () => {
+    const id = eraserIdRef.current;
+    const currentEraser = eraserObjectRef.current;
+    if (!id || !currentEraser) return;
+
+    const finishedEraser = {
+      ...currentEraser,
+      version: currentEraser.version + 1,
+    };
+    eraserIdRef.current = null;
+    eraserObjectRef.current = null;
+    lastEraserSyncRef.current = 0;
+    commitObjects((current) =>
+      current.map((object) => object.id === id ? finishedEraser : object),
+    );
+    emitObjectUpdate(finishedEraser);
+  };
+
   const renderObject = (object: WhiteboardObject) => (
     <WhiteboardObjectRenderer
       key={object.id}
@@ -539,6 +612,11 @@ function BoardPage() {
   );
 
   const handleCanvasPointerDown = (stage: Konva.Stage) => {
+    if (tool === "eraser") {
+      startErasing(stage);
+      return;
+    }
+
     if (tool === "draw") {
       startDrawing(stage);
       return;
@@ -554,11 +632,16 @@ function BoardPage() {
   };
 
   const handleCanvasPointerMove = (stage: Konva.Stage) => {
+    if (tool === "eraser") {
+      continueErasing(stage);
+      return;
+    }
     if (tool === "draw") continueDrawing(stage);
     continueShapePlacement(stage);
   };
 
   const handleCanvasPointerUp = () => {
+    finishErasing();
     finishDrawing();
     finishShapePlacement();
   };
@@ -581,7 +664,7 @@ function BoardPage() {
           joinedUserName={joinedUserName}
           joinedRoomId={joinedRoomId}
           roomMessage={roomMessage}
-          objectCount={objects.length}
+          objectCount={objects.filter((object) => object.type !== "eraser").length}
           onUserNameChange={setUserName}
           onRoomIdChange={setRoomId}
           onJoinRoom={handleJoinRoom}
@@ -593,9 +676,11 @@ function BoardPage() {
           selectedId={selectedId}
           drawColor={drawColor}
           drawWidth={drawWidth}
+          eraserSize={eraserSize}
           onToolChange={setTool}
           onDrawColorChange={setDrawColor}
           onDrawWidthChange={setDrawWidth}
+          onEraserSizeChange={setEraserSize}
           onDeleteSelected={() => {
             if (selectedId) deleteObject(selectedId);
           }}
@@ -609,6 +694,8 @@ function BoardPage() {
           objects={objects}
           selectedId={selectedId}
           selectedObject={selectedObject}
+          eraserSize={eraserSize}
+          eraserPosition={eraserPosition}
           renderObject={renderObject}
           onPointerDown={handleCanvasPointerDown}
           onPointerMove={handleCanvasPointerMove}
