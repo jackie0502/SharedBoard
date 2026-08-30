@@ -1,4 +1,4 @@
-export type Tool = "select" | "rect" | "circle" | "text" | "draw";
+export type Tool = "select" | "rect" | "circle" | "text" | "draw" | "eraser";
 
 export type WhiteboardObject = {
   id: string;

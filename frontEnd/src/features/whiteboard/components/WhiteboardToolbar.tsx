@@ -6,9 +6,11 @@ type WhiteboardToolbarProps = {
   selectedId: string | null;
   drawColor: string;
   drawWidth: number;
+  eraserSize: number;
   onToolChange: (tool: Tool) => void;
   onDrawColorChange: (color: string) => void;
   onDrawWidthChange: (width: number) => void;
+  onEraserSizeChange: (size: number) => void;
   onDeleteSelected: () => void;
 };
 
@@ -17,9 +19,11 @@ function WhiteboardToolbar({
   selectedId,
   drawColor,
   drawWidth,
+  eraserSize,
   onToolChange,
   onDrawColorChange,
   onDrawWidthChange,
+  onEraserSizeChange,
   onDeleteSelected,
 }: WhiteboardToolbarProps) {
   return (
@@ -56,6 +60,22 @@ function WhiteboardToolbar({
               onChange={(event) => onDrawWidthChange(Number(event.target.value))}
             />
           </label>
+        </div>
+      )}
+      {tool === "eraser" && (
+        <div className="draw-controls eraser-controls">
+          <label title="橡皮擦大小">
+            大小 <strong>{eraserSize}</strong>
+            <input
+              type="range"
+              min="12"
+              max="80"
+              step="2"
+              value={eraserSize}
+              onChange={(event) => onEraserSizeChange(Number(event.target.value))}
+            />
+          </label>
+          <small>拖過畫筆筆畫即可刪除整筆</small>
         </div>
       )}
       <div className="toolbar-divider" />

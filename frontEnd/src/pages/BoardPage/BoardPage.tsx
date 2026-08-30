@@ -34,6 +34,47 @@ type ObjectDeleteResponse = ObjectCreateResponse & {
   currentObject?: WhiteboardObject;
 };
 
+type Point = { x: number; y: number };
+
+const distanceToSegment = (point: Point, start: Point, end: Point) => {
+  const segmentX = end.x - start.x;
+  const segmentY = end.y - start.y;
+  const lengthSquared = segmentX * segmentX + segmentY * segmentY;
+
+  if (lengthSquared === 0) return Math.hypot(point.x - start.x, point.y - start.y);
+
+  const projection = Math.max(0, Math.min(1,
+    ((point.x - start.x) * segmentX + (point.y - start.y) * segmentY) / lengthSquared,
+  ));
+  const closestX = start.x + projection * segmentX;
+  const closestY = start.y + projection * segmentY;
+  return Math.hypot(point.x - closestX, point.y - closestY);
+};
+
+const strokeIntersectsEraser = (
+  object: WhiteboardObject,
+  position: Point,
+  eraserSize: number,
+) => {
+  const points = object.points ?? [];
+  const hitDistance = eraserSize / 2 + (object.strokeWidth ?? 5) / 2;
+
+  if (points.length === 2) {
+    return Math.hypot(
+      position.x - (points[0] + object.x),
+      position.y - (points[1] + object.y),
+    ) <= hitDistance;
+  }
+
+  for (let index = 0; index <= points.length - 4; index += 2) {
+    const start = { x: points[index] + object.x, y: points[index + 1] + object.y };
+    const end = { x: points[index + 2] + object.x, y: points[index + 3] + object.y };
+    if (distanceToSegment(position, start, end) <= hitDistance) return true;
+  }
+
+  return false;
+};
+
 const ROOM_STORAGE_KEY = "sharedboard:last-room";
 
 const loadStoredCredentials = (): RoomCredentials | null => {
@@ -53,6 +94,7 @@ function BoardPage() {
   const containerRef = useRef<HTMLDivElement>(null);
   const drawingIdRef = useRef<string | null>(null);
   const drawingObjectRef = useRef<WhiteboardObject | null>(null);
+  const erasingRef = useRef(false);
   const lastDrawingSyncRef = useRef(0);
   const lastDragSyncRef = useRef<Map<string, number>>(new Map());
   const lastTransformSyncRef = useRef<Map<string, number>>(new Map());
@@ -67,6 +109,8 @@ function BoardPage() {
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const [drawColor, setDrawColor] = useState("#202431");
   const [drawWidth, setDrawWidth] = useState(5);
+  const [eraserSize, setEraserSize] = useState(32);
+  const [eraserPosition, setEraserPosition] = useState<Point | null>(null);
   const [connectionStatus, setConnectionStatus] = useState<ConnectionStatus>("connecting");
   const [socketId, setSocketId] = useState<string | null>(null);
   const [userName, setUserName] = useState(
@@ -363,6 +407,20 @@ function BoardPage() {
     );
   };
 
+  const eraseAt = (stage: Konva.Stage) => {
+    const position = stage.getPointerPosition();
+    if (!position) return;
+
+    setEraserPosition(position);
+    const matchingIds = objectsRef.current
+      .filter((object) =>
+        object.type === "stroke" && strokeIntersectsEraser(object, position, eraserSize),
+      )
+      .map((object) => object.id);
+
+    matchingIds.forEach(deleteObject);
+  };
+
   const emitObjectCreate = (object: WhiteboardObject) => {
     if (!joinedCredentialsRef.current || !socket.connected) {
       setRoomMessage("尚未加入房間，物件只建立在本機");
@@ -539,6 +597,12 @@ function BoardPage() {
   );
 
   const handleCanvasPointerDown = (stage: Konva.Stage) => {
+    if (tool === "eraser") {
+      erasingRef.current = true;
+      eraseAt(stage);
+      return;
+    }
+
     if (tool === "draw") {
       startDrawing(stage);
       return;
@@ -554,11 +618,18 @@ function BoardPage() {
   };
 
   const handleCanvasPointerMove = (stage: Konva.Stage) => {
+    if (tool === "eraser") {
+      const position = stage.getPointerPosition();
+      if (position) setEraserPosition(position);
+      if (erasingRef.current) eraseAt(stage);
+      return;
+    }
     if (tool === "draw") continueDrawing(stage);
     continueShapePlacement(stage);
   };
 
   const handleCanvasPointerUp = () => {
+    erasingRef.current = false;
     finishDrawing();
     finishShapePlacement();
   };
@@ -593,9 +664,11 @@ function BoardPage() {
           selectedId={selectedId}
           drawColor={drawColor}
           drawWidth={drawWidth}
+          eraserSize={eraserSize}
           onToolChange={setTool}
           onDrawColorChange={setDrawColor}
           onDrawWidthChange={setDrawWidth}
+          onEraserSizeChange={setEraserSize}
           onDeleteSelected={() => {
             if (selectedId) deleteObject(selectedId);
           }}
@@ -609,6 +682,8 @@ function BoardPage() {
           objects={objects}
           selectedId={selectedId}
           selectedObject={selectedObject}
+          eraserSize={eraserSize}
+          eraserPosition={eraserPosition}
           renderObject={renderObject}
           onPointerDown={handleCanvasPointerDown}
           onPointerMove={handleCanvasPointerMove}

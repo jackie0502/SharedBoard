@@ -45,6 +45,10 @@ kbd { position: absolute; right: 7px; top: 6px; padding: 1px 4px; color: #999cab
 .draw-controls strong { color: #5b35e8; }
 .draw-controls input[type="color"] { width: 100%; height: 28px; padding: 2px; border: 1px solid #dadce5; border-radius: 6px; background: #fff; cursor: pointer; }
 .draw-controls input[type="range"] { width: 100%; accent-color: #6d4aff; }
+.eraser-controls { background: #fff6f6; border-color: #fecaca; }
+.eraser-controls strong { color: #dc2626; }
+.eraser-controls input[type="range"] { accent-color: #ef4444; }
+.eraser-controls small { color: #9f5555; line-height: 1.45; }
 .board-wrap { position: relative; min-width: 0; min-height: calc(100vh - 82px); overflow: hidden; background-color: #f7f8fc; background-image: radial-gradient(#d5d8e3 1px,transparent 1px); background-size: 24px 24px; }
 .board-wrap canvas { position: relative; z-index: 1; }
 .empty-state { position: absolute; inset: 0; display: grid; align-content: center; justify-items: center; pointer-events: none; color: #777b8a; text-align: center; }
