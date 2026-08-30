@@ -1,4 +1,4 @@
-const ALLOWED_OBJECT_TYPES = new Set(["rect", "circle", "text", "stroke"]);
+const ALLOWED_OBJECT_TYPES = new Set(["rect", "circle", "text", "stroke", "eraser"]);
 
 class WhiteboardObjectValidator {
     static isValid(object) {

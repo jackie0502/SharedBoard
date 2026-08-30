@@ -75,7 +75,7 @@ function WhiteboardToolbar({
               onChange={(event) => onEraserSizeChange(Number(event.target.value))}
             />
           </label>
-          <small>拖過畫筆筆畫，只移除碰到的部分</small>
+          <small>像素式擦除，只影響畫筆筆畫</small>
         </div>
       )}
       <div className="toolbar-divider" />

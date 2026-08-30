@@ -2,7 +2,7 @@ export type Tool = "select" | "rect" | "circle" | "text" | "draw" | "eraser";
 
 export type WhiteboardObject = {
   id: string;
-  type: "rect" | "circle" | "text" | "stroke";
+  type: "rect" | "circle" | "text" | "stroke" | "eraser";
   x: number;
   y: number;
   width?: number;

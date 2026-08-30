@@ -57,7 +57,7 @@ function BoardCanvas({
 
   return (
     <div className="board-wrap" ref={containerRef}>
-      {objects.length === 0 && (
+      {objects.every((object) => object.type === "eraser") && (
         <div className="empty-state">
           <div className="empty-icon">✦</div>
           <h1>開始你的白板</h1>
@@ -76,7 +76,16 @@ function BoardCanvas({
         onTouchEnd={onPointerUp}
       >
         <Layer>
-          {objects.map(renderObject)}
+          {objects
+            .filter((object) => object.type !== "stroke" && object.type !== "eraser")
+            .map(renderObject)}
+        </Layer>
+        <Layer>
+          {objects
+            .filter((object) => object.type === "stroke" || object.type === "eraser")
+            .map(renderObject)}
+        </Layer>
+        <Layer listening={false}>
           {tool === "eraser" && eraserPosition && (
             <Circle
               x={eraserPosition.x}
@@ -112,7 +121,7 @@ function BoardCanvas({
           : tool === "rect" || tool === "circle"
             ? `在畫布上拖曳以建立${getToolLabel(tool)}`
             : tool === "eraser"
-              ? "拖過畫筆筆畫，只擦除碰到的部分"
+              ? "拖過畫筆筆畫，像素式擦除經過的區域"
             : `點擊畫布建立${getToolLabel(tool)}`}
       </div>
     </div>

@@ -36,66 +36,6 @@ type ObjectDeleteResponse = ObjectCreateResponse & {
 
 type Point = { x: number; y: number };
 
-const splitStrokeByEraser = (
-  object: WhiteboardObject,
-  position: Point,
-  eraserSize: number,
-) : number[][] | null => {
-  const points = object.points ?? [];
-  if (points.length < 2) return null;
-
-  const localEraser = {
-    x: position.x - object.x,
-    y: position.y - object.y,
-  };
-  const eraseRadius = eraserSize / 2 + (object.strokeWidth ?? 5) / 2;
-  const sampleSpacing = Math.max(1.5, Math.min(4, eraseRadius / 3));
-  const sampledPoints: number[] = [];
-
-  if (points.length === 2) {
-    sampledPoints.push(points[0], points[1]);
-  } else {
-    for (let index = 0; index <= points.length - 4; index += 2) {
-      const startX = points[index];
-      const startY = points[index + 1];
-      const endX = points[index + 2];
-      const endY = points[index + 3];
-      const segmentLength = Math.hypot(endX - startX, endY - startY);
-      const steps = Math.max(1, Math.ceil(segmentLength / sampleSpacing));
-      const firstStep = index === 0 ? 0 : 1;
-
-      for (let step = firstStep; step <= steps; step += 1) {
-        const ratio = step / steps;
-        sampledPoints.push(
-          startX + (endX - startX) * ratio,
-          startY + (endY - startY) * ratio,
-        );
-      }
-    }
-  }
-
-  const fragments: number[][] = [];
-  let currentFragment: number[] = [];
-  let erasedAnyPoint = false;
-
-  for (let index = 0; index < sampledPoints.length; index += 2) {
-    const x = sampledPoints[index];
-    const y = sampledPoints[index + 1];
-    const isErased = Math.hypot(x - localEraser.x, y - localEraser.y) <= eraseRadius;
-
-    if (isErased) {
-      erasedAnyPoint = true;
-      if (currentFragment.length >= 4) fragments.push(currentFragment);
-      currentFragment = [];
-    } else {
-      currentFragment.push(x, y);
-    }
-  }
-
-  if (currentFragment.length >= 4) fragments.push(currentFragment);
-  return erasedAnyPoint ? fragments : null;
-};
-
 const ROOM_STORAGE_KEY = "sharedboard:last-room";
 
 const loadStoredCredentials = (): RoomCredentials | null => {
@@ -115,7 +55,9 @@ function BoardPage() {
   const containerRef = useRef<HTMLDivElement>(null);
   const drawingIdRef = useRef<string | null>(null);
   const drawingObjectRef = useRef<WhiteboardObject | null>(null);
-  const erasingRef = useRef(false);
+  const eraserIdRef = useRef<string | null>(null);
+  const eraserObjectRef = useRef<WhiteboardObject | null>(null);
+  const lastEraserSyncRef = useRef(0);
   const lastDrawingSyncRef = useRef(0);
   const lastDragSyncRef = useRef<Map<string, number>>(new Map());
   const lastTransformSyncRef = useRef<Map<string, number>>(new Map());
@@ -428,38 +370,6 @@ function BoardPage() {
     );
   };
 
-  const eraseAt = (stage: Konva.Stage) => {
-    const position = stage.getPointerPosition();
-    if (!position) return;
-
-    setEraserPosition(position);
-    const affectedStrokes = objectsRef.current
-      .filter((object) =>
-        object.type === "stroke",
-      )
-      .map((object) => ({
-        object,
-        fragments: splitStrokeByEraser(object, position, eraserSize),
-      }))
-      .filter((result): result is { object: WhiteboardObject; fragments: number[][] } =>
-        result.fragments !== null,
-      );
-
-    affectedStrokes.forEach(({ object, fragments }) => {
-      deleteObject(object.id);
-      fragments.forEach((points) => {
-        const fragment: WhiteboardObject = {
-          ...object,
-          id: crypto.randomUUID(),
-          points,
-          version: 1,
-        };
-        commitObjects((current) => [...current, fragment]);
-        emitObjectCreate(fragment);
-      });
-    });
-  };
-
   const emitObjectCreate = (object: WhiteboardObject) => {
     if (!joinedCredentialsRef.current || !socket.connected) {
       setRoomMessage("尚未加入房間，物件只建立在本機");
@@ -621,6 +531,72 @@ function BoardPage() {
     emitObjectUpdate(finishedStroke);
   };
 
+  const startErasing = (stage: Konva.Stage) => {
+    const position = stage.getPointerPosition();
+    if (!position) return;
+    const eraser: WhiteboardObject = {
+      id: crypto.randomUUID(),
+      type: "eraser",
+      x: 0,
+      y: 0,
+      points: [position.x, position.y],
+      strokeWidth: eraserSize,
+      version: 1,
+    };
+
+    eraserIdRef.current = eraser.id;
+    eraserObjectRef.current = eraser;
+    lastEraserSyncRef.current = 0;
+    setEraserPosition(position);
+    setSelectedId(null);
+    commitObjects((current) => [...current, eraser]);
+    emitObjectCreate(eraser);
+  };
+
+  const continueErasing = (stage: Konva.Stage) => {
+    const id = eraserIdRef.current;
+    const currentEraser = eraserObjectRef.current;
+    const position = stage.getPointerPosition();
+    if (!position) return;
+
+    setEraserPosition(position);
+    if (!id || !currentEraser) return;
+
+    let nextEraser: WhiteboardObject = {
+      ...currentEraser,
+      points: [...(currentEraser.points ?? []), position.x, position.y],
+    };
+    const now = performance.now();
+    if (now - lastEraserSyncRef.current >= 50) {
+      nextEraser = { ...nextEraser, version: nextEraser.version + 1 };
+      lastEraserSyncRef.current = now;
+      emitObjectUpdate(nextEraser);
+    }
+
+    eraserObjectRef.current = nextEraser;
+    commitObjects((current) =>
+      current.map((object) => object.id === id ? nextEraser : object),
+    );
+  };
+
+  const finishErasing = () => {
+    const id = eraserIdRef.current;
+    const currentEraser = eraserObjectRef.current;
+    if (!id || !currentEraser) return;
+
+    const finishedEraser = {
+      ...currentEraser,
+      version: currentEraser.version + 1,
+    };
+    eraserIdRef.current = null;
+    eraserObjectRef.current = null;
+    lastEraserSyncRef.current = 0;
+    commitObjects((current) =>
+      current.map((object) => object.id === id ? finishedEraser : object),
+    );
+    emitObjectUpdate(finishedEraser);
+  };
+
   const renderObject = (object: WhiteboardObject) => (
     <WhiteboardObjectRenderer
       key={object.id}
@@ -637,8 +613,7 @@ function BoardPage() {
 
   const handleCanvasPointerDown = (stage: Konva.Stage) => {
     if (tool === "eraser") {
-      erasingRef.current = true;
-      eraseAt(stage);
+      startErasing(stage);
       return;
     }
 
@@ -658,9 +633,7 @@ function BoardPage() {
 
   const handleCanvasPointerMove = (stage: Konva.Stage) => {
     if (tool === "eraser") {
-      const position = stage.getPointerPosition();
-      if (position) setEraserPosition(position);
-      if (erasingRef.current) eraseAt(stage);
+      continueErasing(stage);
       return;
     }
     if (tool === "draw") continueDrawing(stage);
@@ -668,7 +641,7 @@ function BoardPage() {
   };
 
   const handleCanvasPointerUp = () => {
-    erasingRef.current = false;
+    finishErasing();
     finishDrawing();
     finishShapePlacement();
   };
@@ -691,7 +664,7 @@ function BoardPage() {
           joinedUserName={joinedUserName}
           joinedRoomId={joinedRoomId}
           roomMessage={roomMessage}
-          objectCount={objects.length}
+          objectCount={objects.filter((object) => object.type !== "eraser").length}
           onUserNameChange={setUserName}
           onRoomIdChange={setRoomId}
           onJoinRoom={handleJoinRoom}
