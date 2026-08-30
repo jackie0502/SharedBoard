@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import type Konva from "konva";
 import BoardLayout from "../../layouts/BoardLayout";
-import type { ConnectionStatus } from "../../features/room/types";
+import type { ConnectionStatus, RoomMember } from "../../features/room/types";
 import {
   saveActiveRoom,
   saveLastRoom,
@@ -22,6 +22,7 @@ type JoinResponse = {
   roomId?: string;
   socketId?: string;
   objects?: WhiteboardObject[];
+  users?: RoomMember[];
   message: string;
 };
 
@@ -79,6 +80,7 @@ function BoardPage({ initialCredentials, onLeaveRoom }: BoardPageProps) {
   const [joinedRoomId, setJoinedRoomId] = useState<string | null>(null);
   const [joinedUserName, setJoinedUserName] = useState<string | null>(null);
   const [roomMessage, setRoomMessage] = useState("請加入一個房間");
+  const [roomMembers, setRoomMembers] = useState<RoomMember[]>([]);
 
   const selectedObject = objects.find((object) => object.id === selectedId);
 
@@ -109,6 +111,7 @@ function BoardPage({ initialCredentials, onLeaveRoom }: BoardPageProps) {
     setJoinedUserName(credentials.userName);
     setSelectedId(null);
     commitObjects(() => response.objects ?? []);
+    setRoomMembers(response.users ?? []);
     setRoomMessage(message);
   }, [commitObjects]);
 
@@ -128,6 +131,7 @@ function BoardPage({ initialCredentials, onLeaveRoom }: BoardPageProps) {
     const handleDisconnect = () => {
       setConnectionStatus("disconnected");
       setSocketId(null);
+      setRoomMembers([]);
       if (joinedCredentialsRef.current) setRoomMessage("連線中斷，等待自動重新加入");
     };
 
@@ -160,6 +164,11 @@ function BoardPage({ initialCredentials, onLeaveRoom }: BoardPageProps) {
       setRoomMessage(`${data.userName} 離開了房間`);
     };
 
+    const handleRoomUsers = (data: { roomId: string; users: RoomMember[] }) => {
+      if (data.roomId !== joinedCredentialsRef.current?.roomId) return;
+      setRoomMembers(data.users);
+    };
+
     const handleObjectCreate = (data: { object: WhiteboardObject; userName: string }) => {
       commitObjects((current) =>
         current.some((object) => object.id === data.object.id)
@@ -190,6 +199,7 @@ function BoardPage({ initialCredentials, onLeaveRoom }: BoardPageProps) {
 
     socket.on("user:joined", handleUserJoined);
     socket.on("user:left", handleUserLeft);
+    socket.on("room:users", handleRoomUsers);
     socket.on("object:create", handleObjectCreate);
     socket.on("object:update", handleObjectUpdate);
     socket.on("object:delete", handleObjectDelete);
@@ -197,6 +207,7 @@ function BoardPage({ initialCredentials, onLeaveRoom }: BoardPageProps) {
     return () => {
       socket.off("user:joined", handleUserJoined);
       socket.off("user:left", handleUserLeft);
+      socket.off("room:users", handleRoomUsers);
       socket.off("object:create", handleObjectCreate);
       socket.off("object:update", handleObjectUpdate);
       socket.off("object:delete", handleObjectDelete);
@@ -682,6 +693,7 @@ function BoardPage({ initialCredentials, onLeaveRoom }: BoardPageProps) {
           joinedRoomId={joinedRoomId}
           roomMessage={roomMessage}
           objectCount={objects.filter((object) => object.type !== "eraser").length}
+          roomMembers={roomMembers}
           onLeaveRoom={onLeaveRoom}
           onUserNameChange={setUserName}
           onRoomIdChange={setRoomId}

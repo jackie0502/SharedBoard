@@ -4,6 +4,7 @@ const SOCKET_EVENTS = Object.freeze({
     ROOM_JOIN: "room:join",
     USER_JOINED: "user:joined",
     USER_LEFT: "user:left",
+    ROOM_USERS: "room:users",
     OBJECT_CREATE: "object:create",
     OBJECT_UPDATE: "object:update",
     OBJECT_DELETE: "object:delete",

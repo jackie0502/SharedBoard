@@ -1,5 +1,7 @@
 import RoomControls from "../../room/components/RoomControls";
 import type { ConnectionStatus } from "../../room/types";
+import type { RoomMember } from "../../room/types";
+import RoomMemberList from "../../room/components/RoomMemberList";
 
 type BoardHeaderProps = {
   connectionStatus: ConnectionStatus;
@@ -10,6 +12,7 @@ type BoardHeaderProps = {
   joinedRoomId: string | null;
   roomMessage: string;
   objectCount: number;
+  roomMembers: RoomMember[];
   onUserNameChange: (value: string) => void;
   onRoomIdChange: (value: string) => void;
   onJoinRoom: React.FormEventHandler<HTMLFormElement>;
@@ -25,6 +28,7 @@ function BoardHeader(props: BoardHeaderProps) {
       </div>
       <RoomControls {...props} />
       <div className="header-actions">
+        <RoomMemberList members={props.roomMembers} currentSocketId={props.socketId} />
         <span className="object-count">{props.objectCount} 個物件</span>
         <button className="leave-room-button" type="button" onClick={props.onLeaveRoom}>
           返回首頁
