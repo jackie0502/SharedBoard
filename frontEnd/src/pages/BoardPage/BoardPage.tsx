@@ -36,43 +36,64 @@ type ObjectDeleteResponse = ObjectCreateResponse & {
 
 type Point = { x: number; y: number };
 
-const distanceToSegment = (point: Point, start: Point, end: Point) => {
-  const segmentX = end.x - start.x;
-  const segmentY = end.y - start.y;
-  const lengthSquared = segmentX * segmentX + segmentY * segmentY;
-
-  if (lengthSquared === 0) return Math.hypot(point.x - start.x, point.y - start.y);
-
-  const projection = Math.max(0, Math.min(1,
-    ((point.x - start.x) * segmentX + (point.y - start.y) * segmentY) / lengthSquared,
-  ));
-  const closestX = start.x + projection * segmentX;
-  const closestY = start.y + projection * segmentY;
-  return Math.hypot(point.x - closestX, point.y - closestY);
-};
-
-const strokeIntersectsEraser = (
+const splitStrokeByEraser = (
   object: WhiteboardObject,
   position: Point,
   eraserSize: number,
-) => {
+) : number[][] | null => {
   const points = object.points ?? [];
-  const hitDistance = eraserSize / 2 + (object.strokeWidth ?? 5) / 2;
+  if (points.length < 2) return null;
+
+  const localEraser = {
+    x: position.x - object.x,
+    y: position.y - object.y,
+  };
+  const eraseRadius = eraserSize / 2 + (object.strokeWidth ?? 5) / 2;
+  const sampleSpacing = Math.max(1.5, Math.min(4, eraseRadius / 3));
+  const sampledPoints: number[] = [];
 
   if (points.length === 2) {
-    return Math.hypot(
-      position.x - (points[0] + object.x),
-      position.y - (points[1] + object.y),
-    ) <= hitDistance;
+    sampledPoints.push(points[0], points[1]);
+  } else {
+    for (let index = 0; index <= points.length - 4; index += 2) {
+      const startX = points[index];
+      const startY = points[index + 1];
+      const endX = points[index + 2];
+      const endY = points[index + 3];
+      const segmentLength = Math.hypot(endX - startX, endY - startY);
+      const steps = Math.max(1, Math.ceil(segmentLength / sampleSpacing));
+      const firstStep = index === 0 ? 0 : 1;
+
+      for (let step = firstStep; step <= steps; step += 1) {
+        const ratio = step / steps;
+        sampledPoints.push(
+          startX + (endX - startX) * ratio,
+          startY + (endY - startY) * ratio,
+        );
+      }
+    }
   }
 
-  for (let index = 0; index <= points.length - 4; index += 2) {
-    const start = { x: points[index] + object.x, y: points[index + 1] + object.y };
-    const end = { x: points[index + 2] + object.x, y: points[index + 3] + object.y };
-    if (distanceToSegment(position, start, end) <= hitDistance) return true;
+  const fragments: number[][] = [];
+  let currentFragment: number[] = [];
+  let erasedAnyPoint = false;
+
+  for (let index = 0; index < sampledPoints.length; index += 2) {
+    const x = sampledPoints[index];
+    const y = sampledPoints[index + 1];
+    const isErased = Math.hypot(x - localEraser.x, y - localEraser.y) <= eraseRadius;
+
+    if (isErased) {
+      erasedAnyPoint = true;
+      if (currentFragment.length >= 4) fragments.push(currentFragment);
+      currentFragment = [];
+    } else {
+      currentFragment.push(x, y);
+    }
   }
 
-  return false;
+  if (currentFragment.length >= 4) fragments.push(currentFragment);
+  return erasedAnyPoint ? fragments : null;
 };
 
 const ROOM_STORAGE_KEY = "sharedboard:last-room";
@@ -412,13 +433,31 @@ function BoardPage() {
     if (!position) return;
 
     setEraserPosition(position);
-    const matchingIds = objectsRef.current
+    const affectedStrokes = objectsRef.current
       .filter((object) =>
-        object.type === "stroke" && strokeIntersectsEraser(object, position, eraserSize),
+        object.type === "stroke",
       )
-      .map((object) => object.id);
+      .map((object) => ({
+        object,
+        fragments: splitStrokeByEraser(object, position, eraserSize),
+      }))
+      .filter((result): result is { object: WhiteboardObject; fragments: number[][] } =>
+        result.fragments !== null,
+      );
 
-    matchingIds.forEach(deleteObject);
+    affectedStrokes.forEach(({ object, fragments }) => {
+      deleteObject(object.id);
+      fragments.forEach((points) => {
+        const fragment: WhiteboardObject = {
+          ...object,
+          id: crypto.randomUUID(),
+          points,
+          version: 1,
+        };
+        commitObjects((current) => [...current, fragment]);
+        emitObjectCreate(fragment);
+      });
+    });
   };
 
   const emitObjectCreate = (object: WhiteboardObject) => {

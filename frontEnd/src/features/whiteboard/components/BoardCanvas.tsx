@@ -112,7 +112,7 @@ function BoardCanvas({
           : tool === "rect" || tool === "circle"
             ? `在畫布上拖曳以建立${getToolLabel(tool)}`
             : tool === "eraser"
-              ? "拖過畫筆筆畫以刪除整筆"
+              ? "拖過畫筆筆畫，只擦除碰到的部分"
             : `點擊畫布建立${getToolLabel(tool)}`}
       </div>
     </div>
