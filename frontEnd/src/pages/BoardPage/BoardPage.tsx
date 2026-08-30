@@ -1,7 +1,11 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import type Konva from "konva";
 import BoardLayout from "../../layouts/BoardLayout";
-import type { ConnectionStatus, RoomMember } from "../../features/room/types";
+import type {
+  ConnectionStatus,
+  RemoteCursor,
+  RoomMember,
+} from "../../features/room/types";
 import {
   saveActiveRoom,
   saveLastRoom,
@@ -53,6 +57,7 @@ function BoardPage({ initialCredentials, onLeaveRoom }: BoardPageProps) {
   const eraserIdRef = useRef<string | null>(null);
   const eraserObjectRef = useRef<WhiteboardObject | null>(null);
   const lastEraserSyncRef = useRef(0);
+  const lastCursorSyncRef = useRef(0);
   const lastDrawingSyncRef = useRef(0);
   const lastDragSyncRef = useRef<Map<string, number>>(new Map());
   const lastTransformSyncRef = useRef<Map<string, number>>(new Map());
@@ -81,6 +86,7 @@ function BoardPage({ initialCredentials, onLeaveRoom }: BoardPageProps) {
   const [joinedUserName, setJoinedUserName] = useState<string | null>(null);
   const [roomMessage, setRoomMessage] = useState("請加入一個房間");
   const [roomMembers, setRoomMembers] = useState<RoomMember[]>([]);
+  const [remoteCursors, setRemoteCursors] = useState<Record<string, RemoteCursor>>({});
 
   const selectedObject = objects.find((object) => object.id === selectedId);
 
@@ -110,6 +116,7 @@ function BoardPage({ initialCredentials, onLeaveRoom }: BoardPageProps) {
     setJoinedRoomId(credentials.roomId);
     setJoinedUserName(credentials.userName);
     setSelectedId(null);
+    setRemoteCursors({});
     commitObjects(() => response.objects ?? []);
     setRoomMembers(response.users ?? []);
     setRoomMessage(message);
@@ -132,6 +139,7 @@ function BoardPage({ initialCredentials, onLeaveRoom }: BoardPageProps) {
       setConnectionStatus("disconnected");
       setSocketId(null);
       setRoomMembers([]);
+      setRemoteCursors({});
       if (joinedCredentialsRef.current) setRoomMessage("連線中斷，等待自動重新加入");
     };
 
@@ -160,13 +168,33 @@ function BoardPage({ initialCredentials, onLeaveRoom }: BoardPageProps) {
       setRoomMessage(`${data.userName} 加入了房間`);
     };
 
-    const handleUserLeft = (data: { userName: string }) => {
+    const handleUserLeft = (data: { socketId: string; userName: string }) => {
       setRoomMessage(`${data.userName} 離開了房間`);
+      setRemoteCursors((current) => {
+        const next = { ...current };
+        delete next[data.socketId];
+        return next;
+      });
     };
 
     const handleRoomUsers = (data: { roomId: string; users: RoomMember[] }) => {
       if (data.roomId !== joinedCredentialsRef.current?.roomId) return;
       setRoomMembers(data.users);
+    };
+
+    const handleCursorMove = (data: Omit<RemoteCursor, "updatedAt">) => {
+      setRemoteCursors((current) => ({
+        ...current,
+        [data.socketId]: { ...data, updatedAt: Date.now() },
+      }));
+    };
+
+    const handleCursorHide = (data: { socketId: string }) => {
+      setRemoteCursors((current) => {
+        const next = { ...current };
+        delete next[data.socketId];
+        return next;
+      });
     };
 
     const handleObjectCreate = (data: { object: WhiteboardObject; userName: string }) => {
@@ -200,6 +228,8 @@ function BoardPage({ initialCredentials, onLeaveRoom }: BoardPageProps) {
     socket.on("user:joined", handleUserJoined);
     socket.on("user:left", handleUserLeft);
     socket.on("room:users", handleRoomUsers);
+    socket.on("cursor:move", handleCursorMove);
+    socket.on("cursor:hide", handleCursorHide);
     socket.on("object:create", handleObjectCreate);
     socket.on("object:update", handleObjectUpdate);
     socket.on("object:delete", handleObjectDelete);
@@ -208,11 +238,24 @@ function BoardPage({ initialCredentials, onLeaveRoom }: BoardPageProps) {
       socket.off("user:joined", handleUserJoined);
       socket.off("user:left", handleUserLeft);
       socket.off("room:users", handleRoomUsers);
+      socket.off("cursor:move", handleCursorMove);
+      socket.off("cursor:hide", handleCursorHide);
       socket.off("object:create", handleObjectCreate);
       socket.off("object:update", handleObjectUpdate);
       socket.off("object:delete", handleObjectDelete);
     };
   }, [commitObjects]);
+
+  useEffect(() => {
+    const timer = window.setInterval(() => {
+      const staleBefore = Date.now() - 5000;
+      setRemoteCursors((current) => Object.fromEntries(
+        Object.entries(current).filter(([, cursor]) => cursor.updatedAt >= staleBefore),
+      ));
+    }, 2000);
+
+    return () => window.clearInterval(timer);
+  }, []);
 
   const handleJoinRoom = (event: React.FormEvent<HTMLFormElement>) => {
     event.preventDefault();
@@ -660,6 +703,18 @@ function BoardPage({ initialCredentials, onLeaveRoom }: BoardPageProps) {
   };
 
   const handleCanvasPointerMove = (stage: Konva.Stage) => {
+    const cursorPosition = stage.getPointerPosition();
+    const now = performance.now();
+    if (
+      cursorPosition &&
+      joinedCredentialsRef.current &&
+      socket.connected &&
+      now - lastCursorSyncRef.current >= 50
+    ) {
+      lastCursorSyncRef.current = now;
+      socket.emit("cursor:move", cursorPosition);
+    }
+
     if (tool === "eraser") {
       continueErasing(stage);
       return;
@@ -672,6 +727,11 @@ function BoardPage({ initialCredentials, onLeaveRoom }: BoardPageProps) {
     finishErasing();
     finishDrawing();
     finishShapePlacement();
+  };
+
+  const handleCanvasPointerLeave = () => {
+    lastCursorSyncRef.current = 0;
+    if (joinedCredentialsRef.current && socket.connected) socket.emit("cursor:hide");
   };
 
   useKeyboardShortcuts({
@@ -726,10 +786,12 @@ function BoardPage({ initialCredentials, onLeaveRoom }: BoardPageProps) {
           selectedObject={selectedObject}
           eraserSize={eraserSize}
           eraserPosition={eraserPosition}
+          remoteCursors={Object.values(remoteCursors)}
           renderObject={renderObject}
           onPointerDown={handleCanvasPointerDown}
           onPointerMove={handleCanvasPointerMove}
           onPointerUp={handleCanvasPointerUp}
+          onPointerLeave={handleCanvasPointerLeave}
         />
       )}
       inspector={(

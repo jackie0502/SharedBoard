@@ -27,6 +27,9 @@ class WhiteboardGateway {
             this.handleObjectUpdate(socket, data, callback));
         socket.on(SOCKET_EVENTS.OBJECT_DELETE, (data, callback) =>
             this.handleObjectDelete(socket, data, callback));
+        socket.on(SOCKET_EVENTS.CURSOR_MOVE, (data, callback) =>
+            this.handleCursorMove(socket, data, callback));
+        socket.on(SOCKET_EVENTS.CURSOR_HIDE, () => this.handleCursorHide(socket));
         socket.on(SOCKET_EVENTS.DISCONNECT, () => this.handleDisconnect(socket));
     }
 
@@ -62,6 +65,9 @@ class WhiteboardGateway {
         }
 
         if (previousRoomId) {
+            socket.to(previousRoomId).emit(SOCKET_EVENTS.CURSOR_HIDE, {
+                socketId: socket.id,
+            });
             socket.leave(previousRoomId);
             this.removeRoomMember(previousRoomId, socket.id);
             socket.to(previousRoomId).emit(SOCKET_EVENTS.USER_LEFT, {
@@ -168,11 +174,44 @@ class WhiteboardGateway {
         }
     }
 
+    handleCursorMove(socket, data, callback) {
+        const respond = getResponder(callback);
+        const membership = this.getMembership(socket, respond);
+        if (!membership) return;
+
+        const x = data?.x;
+        const y = data?.y;
+        if (!Number.isFinite(x) || !Number.isFinite(y)) {
+            respond({ success: false, message: "游標座標格式不正確" });
+            return;
+        }
+
+        socket.to(membership.roomId).emit(SOCKET_EVENTS.CURSOR_MOVE, {
+            socketId: socket.id,
+            userName: membership.userName,
+            x,
+            y,
+        });
+        respond({ success: true });
+    }
+
+    handleCursorHide(socket) {
+        const { roomId } = socket.data;
+        if (!roomId) return;
+
+        socket.to(roomId).emit(SOCKET_EVENTS.CURSOR_HIDE, {
+            socketId: socket.id,
+        });
+    }
+
     handleDisconnect(socket) {
         const { roomId, userName } = socket.data;
 
         if (roomId && userName) {
             this.removeRoomMember(roomId, socket.id);
+            socket.to(roomId).emit(SOCKET_EVENTS.CURSOR_HIDE, {
+                socketId: socket.id,
+            });
             socket.to(roomId).emit(SOCKET_EVENTS.USER_LEFT, {
                 socketId: socket.id,
                 userName,

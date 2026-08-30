@@ -13,14 +13,20 @@ const createIo = () => {
     };
 };
 
-const createSocket = (id) => ({
-    id,
-    data: {},
-    rooms: new Set(),
-    join(roomId) { this.rooms.add(roomId); },
-    leave(roomId) { this.rooms.delete(roomId); },
-    to: () => ({ emit: () => {} }),
-});
+const createSocket = (id) => {
+    const events = [];
+    return {
+        id,
+        data: {},
+        events,
+        rooms: new Set(),
+        join(roomId) { this.rooms.add(roomId); },
+        leave(roomId) { this.rooms.delete(roomId); },
+        to: (roomId) => ({
+            emit: (event, data) => events.push({ roomId, event, data }),
+        }),
+    };
+};
 
 test("Gateway 會維護加入與離開房間的成員名單", () => {
     const io = createIo();
@@ -60,4 +66,36 @@ test("Gateway 會維護加入與離開房間的成員名單", () => {
             users: [{ socketId: "socket-a", userName: "Alice" }],
         },
     });
+});
+
+test("Gateway 只會向同房間其他使用者廣播有效游標座標", () => {
+    const io = createIo();
+    const service = { getSnapshot: () => [] };
+    const logger = { log: () => {}, error: () => {} };
+    const gateway = new WhiteboardGateway(io, service, logger);
+    const alice = createSocket("socket-a");
+    let validResponse;
+    let invalidResponse;
+
+    gateway.handleRoomJoin(alice, { roomId: "room-1", userName: "Alice" }, () => {});
+    alice.events.length = 0;
+    gateway.handleCursorMove(alice, { x: 120, y: 80 }, (data) => {
+        validResponse = data;
+    });
+    gateway.handleCursorMove(alice, { x: "bad", y: 80 }, (data) => {
+        invalidResponse = data;
+    });
+
+    assert.deepEqual(validResponse, { success: true });
+    assert.equal(invalidResponse.success, false);
+    assert.deepEqual(alice.events, [{
+        roomId: "room-1",
+        event: "cursor:move",
+        data: {
+            socketId: "socket-a",
+            userName: "Alice",
+            x: 120,
+            y: 80,
+        },
+    }]);
 });
