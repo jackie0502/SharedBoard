@@ -9,7 +9,7 @@ class Room {
     }
 
     getSnapshot() {
-        return Array.from(this.#objects.values());
+        return structuredClone(Array.from(this.#objects.values()));
     }
 
     loadSnapshot(objects) {
@@ -25,7 +25,7 @@ class Room {
             if (snapshotObjects.has(object.id)) {
                 throw new DomainError("Snapshot 包含重複的物件 ID");
             }
-            snapshotObjects.set(object.id, object);
+            snapshotObjects.set(object.id, structuredClone(object));
         }
 
         this.#objects = snapshotObjects;
@@ -40,8 +40,9 @@ class Room {
             throw new DomainError("物件 ID 已存在");
         }
 
-        this.#objects.set(object.id, object);
-        return object;
+        const storedObject = structuredClone(object);
+        this.#objects.set(storedObject.id, storedObject);
+        return structuredClone(storedObject);
     }
 
     updateObject(object) {
@@ -57,12 +58,13 @@ class Room {
         if (object.version <= currentObject.version) {
             throw new DomainError(
                 `更新版本過舊，目前版本為 ${currentObject.version}`,
-                { currentObject },
+                { currentObject: structuredClone(currentObject) },
             );
         }
 
-        this.#objects.set(object.id, object);
-        return object;
+        const storedObject = structuredClone(object);
+        this.#objects.set(storedObject.id, storedObject);
+        return structuredClone(storedObject);
     }
 
     deleteObject(objectId, version) {
@@ -78,12 +80,12 @@ class Room {
         if (version <= currentObject.version) {
             throw new DomainError(
                 `刪除版本過舊，目前版本為 ${currentObject.version}`,
-                { currentObject },
+                { currentObject: structuredClone(currentObject) },
             );
         }
 
         this.#objects.delete(objectId);
-        return currentObject;
+        return structuredClone(currentObject);
     }
 }
 

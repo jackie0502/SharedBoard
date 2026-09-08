@@ -4,30 +4,36 @@ require("dotenv").config();
 
 const { createApp } = require("./app");
 const { WhiteboardService } = require("./application/WhiteboardService");
+const { PersistenceConfig } = require("./config/PersistenceConfig");
 const { PostgresSnapshotStore } = require("./persistence/PostgresSnapshotStore");
 const { InMemoryRoomRepository } = require("./repositories/InMemoryRoomRepository");
 const { PersistentRoomRepository } = require("./repositories/PersistentRoomRepository");
 const { WhiteboardGateway } = require("./socket/WhiteboardGateway");
 
 const createConfiguredRoomRepository = async ({ env = process.env, logger = console } = {}) => {
-    if (!env.DATABASE_URL) {
+    const config = PersistenceConfig.fromEnvironment(env);
+    if (!config.enabled) {
         logger.log("未設定 DATABASE_URL，使用記憶體 Room State");
         return new InMemoryRoomRepository();
     }
 
     const snapshotStore = new PostgresSnapshotStore({
-        connectionString: env.DATABASE_URL,
-        ssl: env.DATABASE_SSL === "true",
+        ...config.storeOptions,
+        logger,
     });
-    const saveIntervalMs = Number.parseInt(env.SNAPSHOT_SAVE_INTERVAL_MS ?? "1000", 10);
     const roomRepository = new PersistentRoomRepository(snapshotStore, {
-        saveIntervalMs: Number.isFinite(saveIntervalMs) && saveIntervalMs > 0
-            ? saveIntervalMs
-            : 1000,
+        ...config.repositoryOptions,
         logger,
     });
 
-    await roomRepository.initialize();
+    try {
+        await roomRepository.initialize();
+    } catch (error) {
+        await roomRepository.close().catch((closeError) => {
+            logger.error("PostgreSQL 初始化失敗後，關閉連線池時再次發生錯誤：", closeError);
+        });
+        throw error;
+    }
     logger.log("PostgreSQL Snapshot 持久化已啟用");
     return roomRepository;
 };
@@ -72,13 +78,20 @@ const startServer = async (port = process.env.PORT || 3000, options = {}) => {
     });
     const sharedBoardServer = createSharedBoardServer({ logger, roomRepository });
 
-    await new Promise((resolve, reject) => {
-        sharedBoardServer.server.once("error", reject);
-        sharedBoardServer.server.listen(port, () => {
-            sharedBoardServer.server.off("error", reject);
-            resolve();
+    try {
+        await new Promise((resolve, reject) => {
+            sharedBoardServer.server.once("error", reject);
+            sharedBoardServer.server.listen(port, () => {
+                sharedBoardServer.server.off("error", reject);
+                resolve();
+            });
         });
-    });
+    } catch (error) {
+        await sharedBoardServer.close().catch((closeError) => {
+            logger.error("伺服器啟動失敗後，釋放資源時再次發生錯誤：", closeError);
+        });
+        throw error;
+    }
 
     const actualPort = sharedBoardServer.server.address().port;
     logger.log(`Server is running at http://localhost:${actualPort}`);

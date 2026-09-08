@@ -5,6 +5,10 @@
 後端未設定 `DATABASE_URL` 時仍可用記憶體模式執行；設定後會在使用者首次進入
 Room 時載入 Snapshot，並將操作以批次方式寫回 PostgreSQL。
 
+每筆 Snapshot 都有遞增的 `revision`。如果另一個後端程序已先更新相同 Room，
+舊的 Snapshot 會被拒絕，避免在不知情的情況下覆蓋新資料。一般連線或暫時性資料庫
+錯誤會以指數退避方式自動重試。
+
 ### 1. 啟動 PostgreSQL
 
 在專案根目錄執行：
@@ -48,7 +52,8 @@ Server is running at http://localhost:3000
 ```
 
 資料表會由後端自動建立，也可以手動執行
-`BackEnd/sql/001_create_whiteboard_snapshots.sql`。
+`BackEnd/sql/001_create_whiteboard_snapshots.sql`。既有資料庫可執行
+`BackEnd/sql/002_add_snapshot_revision.sql`；新版後端啟動時也會自動補上欄位。
 
 ### 4. 驗證永久保存
 
@@ -60,5 +65,5 @@ Server is running at http://localhost:3000
 查看已保存的房間：
 
 ```powershell
-docker compose exec postgres psql -U sharedboard -d sharedboard -c "SELECT room_id, jsonb_array_length(objects) AS object_count, updated_at FROM whiteboard_snapshots;"
+docker compose exec postgres psql -U sharedboard -d sharedboard -c "SELECT room_id, revision, jsonb_array_length(objects) AS object_count, updated_at FROM whiteboard_snapshots;"
 ```
