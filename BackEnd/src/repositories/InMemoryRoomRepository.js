@@ -18,6 +18,14 @@ class InMemoryRoomRepository {
     delete(roomId) {
         return this.#rooms.delete(roomId);
     }
+
+    markDirty() {}
+
+    async initialize() {}
+
+    async flushAll() {}
+
+    async close() {}
 }
 
 module.exports = { InMemoryRoomRepository };
