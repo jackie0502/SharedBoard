@@ -66,7 +66,7 @@ test("Room 只接受版本較新的更新", () => {
         (error) =>
             error instanceof DomainError &&
             error.message === "更新版本過舊，目前版本為 2" &&
-            error.details.currentObject === updated,
+            assert.deepEqual(error.details.currentObject, updated) === undefined,
     );
 });
 
@@ -79,8 +79,20 @@ test("Room 刪除失敗時會附上目前物件", () => {
         () => room.deleteObject(currentObject.id, 3),
         (error) =>
             error instanceof DomainError &&
-            error.details.currentObject === currentObject,
+            assert.deepEqual(error.details.currentObject, currentObject) === undefined,
     );
+});
+
+test("Room Snapshot 與寫入物件不會洩漏內部可變參照", () => {
+    const room = new Room("room-1");
+    const object = rectangle();
+    room.createObject(object);
+
+    object.x = 999;
+    const firstSnapshot = room.getSnapshot();
+    firstSnapshot[0].x = 888;
+
+    assert.equal(room.getSnapshot()[0].x, 10);
 });
 
 test("WhiteboardService 透過 Repository 操作同一個 Room", async () => {

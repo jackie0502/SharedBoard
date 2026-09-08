@@ -1,0 +1,2 @@
+ALTER TABLE whiteboard_snapshots
+ADD COLUMN IF NOT EXISTS revision BIGINT NOT NULL DEFAULT 1;
