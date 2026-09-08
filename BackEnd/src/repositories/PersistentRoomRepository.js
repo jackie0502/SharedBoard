@@ -57,6 +57,16 @@ class PersistentRoomRepository {
         this.#scheduleSave(state);
     }
 
+    async discard(roomId) {
+        const state = this.#states.get(roomId);
+        if (state) {
+            state.clearSaveTimer();
+            if (state.inFlightSave) await state.inFlightSave;
+            this.#states.delete(roomId);
+        }
+        this.memoryRepository.delete(roomId);
+    }
+
     async flush(roomId) {
         const state = this.#getState(roomId);
         const inFlightSave = state.inFlightSave;

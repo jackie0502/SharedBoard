@@ -5,10 +5,11 @@ const getResponder = (callback) =>
     typeof callback === "function" ? callback : () => {};
 
 class WhiteboardGateway {
-    constructor(io, whiteboardService, logger = console) {
+    constructor(io, whiteboardService, logger = console, roomCatalogService = null) {
         this.io = io;
         this.whiteboardService = whiteboardService;
         this.logger = logger;
+        this.roomCatalogService = roomCatalogService;
         this.membersByRoom = new Map();
     }
 
@@ -51,6 +52,7 @@ class WhiteboardGateway {
 
         let objects;
         try {
+            await this.roomCatalogService?.ensureRoom(roomId);
             objects = await this.whiteboardService.getSnapshot(roomId);
         } catch (error) {
             this.respondWithError(error, respond);
@@ -303,6 +305,10 @@ class WhiteboardGateway {
     getRoomMembers(roomId) {
         const members = this.membersByRoom.get(roomId) ?? new Map();
         return Array.from(members, ([socketId, userName]) => ({ socketId, userName }));
+    }
+
+    hasRoomMembers(roomId) {
+        return (this.membersByRoom.get(roomId)?.size ?? 0) > 0;
     }
 
     emitRoomUsers(roomId) {

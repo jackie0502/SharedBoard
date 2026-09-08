@@ -1,31 +1,87 @@
-import { useState } from "react";
+import { useCallback, useEffect, useState } from "react";
+import { roomApi, type RoomSummary } from "../../features/room/api";
 import { loadLastRoom, type RoomCredentials } from "../../features/room/storage";
 
 type HomePageProps = {
+  initialRoomId?: string;
   onEnterRoom: (credentials: RoomCredentials) => void;
 };
 
-function HomePage({ onEnterRoom }: HomePageProps) {
+function HomePage({ initialRoomId, onEnterRoom }: HomePageProps) {
   const lastRoom = loadLastRoom();
   const [userName, setUserName] = useState(lastRoom?.userName ?? "");
-  const [roomId, setRoomId] = useState(lastRoom?.roomId ?? "");
+  const [roomId, setRoomId] = useState(initialRoomId ?? lastRoom?.roomId ?? "");
   const [error, setError] = useState("");
+  const [rooms, setRooms] = useState<RoomSummary[]>([]);
+  const [loadingRooms, setLoadingRooms] = useState(true);
+  const [creatingRoom, setCreatingRoom] = useState(false);
 
-  const enterRoom = (event: React.FormEvent<HTMLFormElement>) => {
-    event.preventDefault();
-    const credentials = { userName: userName.trim(), roomId: roomId.trim() };
+  const refreshRooms = useCallback(async () => {
+    setLoadingRooms(true);
+    try {
+      setRooms(await roomApi.list());
+    } catch (requestError) {
+      setError(requestError instanceof Error ? requestError.message : "無法載入 Room List");
+    } finally {
+      setLoadingRooms(false);
+    }
+  }, []);
 
+  useEffect(() => {
+    void refreshRooms();
+  }, [refreshRooms]);
+
+  const enterWithRoomId = (nextRoomId: string) => {
+    const credentials = { userName: userName.trim(), roomId: nextRoomId.trim() };
     if (!credentials.userName || !credentials.roomId) {
       setError("請輸入使用者名稱與 Room ID");
       return;
     }
-
     onEnterRoom(credentials);
   };
 
-  const createRoomId = () => {
-    setRoomId(`room-${crypto.randomUUID().slice(0, 8)}`);
+  const enterRoom = (event: React.FormEvent<HTMLFormElement>) => {
+    event.preventDefault();
+    enterWithRoomId(roomId);
+  };
+
+  const createRoom = async () => {
+    if (!userName.trim()) {
+      setError("請先輸入使用者名稱");
+      return;
+    }
+    setCreatingRoom(true);
     setError("");
+    try {
+      const room = await roomApi.create();
+      setRoomId(room.id);
+      onEnterRoom({ roomId: room.id, userName: userName.trim() });
+    } catch (requestError) {
+      setError(requestError instanceof Error ? requestError.message : "建立 Room 失敗");
+    } finally {
+      setCreatingRoom(false);
+    }
+  };
+
+  const renameRoom = async (room: RoomSummary) => {
+    const name = window.prompt("新的 Room 名稱", room.name)?.trim();
+    if (!name || name === room.name) return;
+    try {
+      await roomApi.rename(room.id, name);
+      await refreshRooms();
+    } catch (requestError) {
+      setError(requestError instanceof Error ? requestError.message : "重新命名失敗");
+    }
+  };
+
+  const deleteRoom = async (room: RoomSummary) => {
+    if (!window.confirm(`確定刪除「${room.name}」及其全部白板內容？`)) return;
+    try {
+      await roomApi.delete(room.id);
+      await refreshRooms();
+    } catch (requestError) {
+      setError(requestError instanceof Error ? requestError.message : "刪除 Room 失敗");
+    }
   };
 
   return (
@@ -85,7 +141,9 @@ function HomePage({ onEnterRoom }: HomePageProps) {
                 placeholder="例如：room-001"
                 maxLength={50}
               />
-              <button type="button" onClick={createRoomId}>建立</button>
+              <button type="button" onClick={createRoom} disabled={creatingRoom}>
+                {creatingRoom ? "建立中" : "建立"}
+              </button>
             </div>
           </label>
           {error && <p className="join-error" role="alert">{error}</p>}
@@ -94,6 +152,47 @@ function HomePage({ onEnterRoom }: HomePageProps) {
           </button>
         </form>
         <p className="join-note">進入後，將自動連線到本機協作伺服器。</p>
+      </section>
+
+      <section className="room-list-panel" aria-labelledby="room-list-title">
+        <div className="room-list-heading">
+          <div>
+            <span className="home-eyebrow">ROOMS</span>
+            <h2 id="room-list-title">最近使用的 Room</h2>
+          </div>
+          <button type="button" onClick={() => void refreshRooms()}>重新整理</button>
+        </div>
+
+        {loadingRooms ? (
+          <p className="room-list-state">正在載入 Room…</p>
+        ) : rooms.length === 0 ? (
+          <p className="room-list-state">尚未建立 Room，建立第一個協作空間吧。</p>
+        ) : (
+          <div className="room-list-grid">
+            {rooms.map((room) => (
+              <article className="room-card" key={room.id}>
+                <div>
+                  <h3>{room.name}</h3>
+                  <code>{room.id}</code>
+                </div>
+                <time dateTime={room.updatedAt}>
+                  更新於 {new Date(room.updatedAt).toLocaleString("zh-TW")}
+                </time>
+                <div className="room-card-actions">
+                  <button type="button" onClick={() => enterWithRoomId(room.id)}>進入</button>
+                  <button type="button" onClick={() => void renameRoom(room)}>改名</button>
+                  <button
+                    className="room-delete-button"
+                    type="button"
+                    onClick={() => void deleteRoom(room)}
+                  >
+                    刪除
+                  </button>
+                </div>
+              </article>
+            ))}
+          </div>
+        )}
       </section>
     </main>
   );
