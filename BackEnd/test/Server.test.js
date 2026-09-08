@@ -13,11 +13,12 @@ test("HTTP 監聽失敗時會關閉 Room Repository", async () => {
         async close() { closeCalls += 1; },
         getOrCreate() { throw new Error("not used"); },
     };
+    const roomCatalogRepository = { async close() {} };
     const logger = { log: () => {}, error: () => {} };
 
     try {
         await assert.rejects(
-            startServer(port, { roomRepository, logger }),
+            startServer(port, { roomRepository, roomCatalogRepository, logger }),
             (error) => error.code === "EADDRINUSE",
         );
         assert.equal(closeCalls, 1);

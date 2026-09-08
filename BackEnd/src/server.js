@@ -3,11 +3,18 @@ const { Server } = require("socket.io");
 require("dotenv").config();
 
 const { createApp } = require("./app");
+const { RoomCatalogService } = require("./application/RoomCatalogService");
 const { WhiteboardService } = require("./application/WhiteboardService");
 const { PersistenceConfig } = require("./config/PersistenceConfig");
 const { PostgresSnapshotStore } = require("./persistence/PostgresSnapshotStore");
+const {
+    InMemoryRoomCatalogRepository,
+} = require("./repositories/InMemoryRoomCatalogRepository");
 const { InMemoryRoomRepository } = require("./repositories/InMemoryRoomRepository");
 const { PersistentRoomRepository } = require("./repositories/PersistentRoomRepository");
+const {
+    PostgresRoomCatalogRepository,
+} = require("./repositories/PostgresRoomCatalogRepository");
 const { WhiteboardGateway } = require("./socket/WhiteboardGateway");
 
 const createConfiguredRoomRepository = async ({ env = process.env, logger = console } = {}) => {
@@ -38,11 +45,37 @@ const createConfiguredRoomRepository = async ({ env = process.env, logger = cons
     return roomRepository;
 };
 
+const createConfiguredRoomCatalogRepository = async ({
+    env = process.env,
+    logger = console,
+} = {}) => {
+    const config = PersistenceConfig.fromEnvironment(env);
+    if (!config.enabled) return new InMemoryRoomCatalogRepository();
+
+    const repository = new PostgresRoomCatalogRepository({
+        ...config.storeOptions,
+        logger,
+    });
+    try {
+        await repository.initialize();
+        return repository;
+    } catch (error) {
+        await repository.close().catch((closeError) => {
+            logger.error("Room Catalog 初始化失敗後關閉連線池失敗：", closeError);
+        });
+        throw error;
+    }
+};
+
 const createSharedBoardServer = ({
     logger = console,
     roomRepository = new InMemoryRoomRepository(),
+    roomCatalogRepository = new InMemoryRoomCatalogRepository(),
 } = {}) => {
-    const app = createApp();
+    const roomCatalogService = new RoomCatalogService(roomCatalogRepository, {
+        whiteboardRoomRepository: roomRepository,
+    });
+    const app = createApp({ roomCatalogService });
     const server = http.createServer(app);
     const io = new Server(server, {
         cors: {
@@ -52,19 +85,37 @@ const createSharedBoardServer = ({
     });
 
     const whiteboardService = new WhiteboardService(roomRepository);
-    const gateway = new WhiteboardGateway(io, whiteboardService, logger);
+    const gateway = new WhiteboardGateway(
+        io,
+        whiteboardService,
+        logger,
+        roomCatalogService,
+    );
     gateway.register();
+    roomCatalogService.setRoomActiveChecker((roomId) =>
+        gateway.hasRoomMembers(roomId));
 
     return {
         app,
         server,
         io,
         roomRepository,
+        roomCatalogRepository,
+        roomCatalogService,
         whiteboardService,
         async close() {
-            await roomRepository.close();
             if (io.httpServer?.listening) {
                 await new Promise((resolve) => io.close(resolve));
+            }
+            const results = await Promise.allSettled([
+                roomRepository.close(),
+                roomCatalogRepository.close(),
+            ]);
+            const errors = results
+                .filter((result) => result.status === "rejected")
+                .map((result) => result.reason);
+            if (errors.length > 0) {
+                throw new AggregateError(errors, "關閉後端資源時發生錯誤");
             }
         },
     };
@@ -72,11 +123,27 @@ const createSharedBoardServer = ({
 
 const startServer = async (port = process.env.PORT || 3000, options = {}) => {
     const logger = options.logger ?? console;
-    const roomRepository = options.roomRepository ?? await createConfiguredRoomRepository({
-        env: options.env ?? process.env,
+    const env = options.env ?? process.env;
+    let roomRepository = options.roomRepository;
+    let roomCatalogRepository = options.roomCatalogRepository;
+    try {
+        roomRepository ??= await createConfiguredRoomRepository({ env, logger });
+        roomCatalogRepository ??= await createConfiguredRoomCatalogRepository({
+            env,
+            logger,
+        });
+    } catch (error) {
+        await Promise.allSettled([
+            roomRepository?.close?.(),
+            roomCatalogRepository?.close?.(),
+        ]);
+        throw error;
+    }
+    const sharedBoardServer = createSharedBoardServer({
         logger,
+        roomRepository,
+        roomCatalogRepository,
     });
-    const sharedBoardServer = createSharedBoardServer({ logger, roomRepository });
 
     try {
         await new Promise((resolve, reject) => {
@@ -125,6 +192,7 @@ if (require.main === module) {
 }
 
 module.exports = {
+    createConfiguredRoomCatalogRepository,
     createConfiguredRoomRepository,
     createSharedBoardServer,
     startServer,

@@ -50,9 +50,10 @@ type Point = { x: number; y: number };
 type BoardPageProps = {
   initialCredentials: RoomCredentials;
   onLeaveRoom: () => void;
+  onRoomJoined?: (credentials: RoomCredentials) => void;
 };
 
-function BoardPage({ initialCredentials, onLeaveRoom }: BoardPageProps) {
+function BoardPage({ initialCredentials, onLeaveRoom, onRoomJoined }: BoardPageProps) {
   const containerRef = useRef<HTMLDivElement>(null);
   const drawingIdRef = useRef<string | null>(null);
   const drawingObjectRef = useRef<WhiteboardObject | null>(null);
@@ -124,7 +125,8 @@ function BoardPage({ initialCredentials, onLeaveRoom }: BoardPageProps) {
     commitObjects(() => response.objects ?? []);
     setRoomMembers(response.users ?? []);
     setRoomMessage(message);
-  }, [commitObjects]);
+    onRoomJoined?.(credentials);
+  }, [commitObjects, onRoomJoined]);
 
   useEffect(() => {
     const handleConnect = () => {

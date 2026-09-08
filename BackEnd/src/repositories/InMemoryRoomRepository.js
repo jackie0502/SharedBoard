@@ -19,6 +19,10 @@ class InMemoryRoomRepository {
         return this.#rooms.delete(roomId);
     }
 
+    async discard(roomId) {
+        this.delete(roomId);
+    }
+
     markDirty() {}
 
     async initialize() {}
