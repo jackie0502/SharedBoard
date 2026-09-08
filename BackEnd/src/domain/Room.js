@@ -12,6 +12,25 @@ class Room {
         return Array.from(this.#objects.values());
     }
 
+    loadSnapshot(objects) {
+        if (!Array.isArray(objects)) {
+            throw new DomainError("Snapshot 資料格式不正確");
+        }
+
+        const snapshotObjects = new Map();
+        for (const object of objects) {
+            if (!WhiteboardObjectValidator.isValid(object)) {
+                throw new DomainError("Snapshot 包含格式不正確的物件");
+            }
+            if (snapshotObjects.has(object.id)) {
+                throw new DomainError("Snapshot 包含重複的物件 ID");
+            }
+            snapshotObjects.set(object.id, object);
+        }
+
+        this.#objects = snapshotObjects;
+    }
+
     createObject(object) {
         if (!WhiteboardObjectValidator.isValid(object)) {
             throw new DomainError("物件資料格式不正確");

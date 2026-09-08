@@ -83,16 +83,16 @@ test("Room 刪除失敗時會附上目前物件", () => {
     );
 });
 
-test("WhiteboardService 透過 Repository 操作同一個 Room", () => {
+test("WhiteboardService 透過 Repository 操作同一個 Room", async () => {
     const repository = new InMemoryRoomRepository();
     const service = new WhiteboardService(repository);
     const object = rectangle();
 
-    service.createObject("room-1", object);
-    const snapshot = service.getSnapshot("room-1");
-    service.deleteObject("room-1", object.id, 2);
+    await service.createObject("room-1", object);
+    const snapshot = await service.getSnapshot("room-1");
+    await service.deleteObject("room-1", object.id, 2);
 
     assert.deepEqual(snapshot, [object]);
-    assert.deepEqual(service.getSnapshot("room-1"), []);
+    assert.deepEqual(await service.getSnapshot("room-1"), []);
     assert.equal(repository.find("missing-room"), null);
 });

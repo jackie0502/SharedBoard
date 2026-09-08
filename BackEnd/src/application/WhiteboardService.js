@@ -3,20 +3,30 @@ class WhiteboardService {
         this.roomRepository = roomRepository;
     }
 
-    getSnapshot(roomId) {
-        return this.roomRepository.getOrCreate(roomId).getSnapshot();
+    async getSnapshot(roomId) {
+        const room = await this.roomRepository.getOrCreate(roomId);
+        return room.getSnapshot();
     }
 
-    createObject(roomId, object) {
-        return this.roomRepository.getOrCreate(roomId).createObject(object);
+    async createObject(roomId, object) {
+        const room = await this.roomRepository.getOrCreate(roomId);
+        const createdObject = room.createObject(object);
+        this.roomRepository.markDirty(roomId);
+        return createdObject;
     }
 
-    updateObject(roomId, object) {
-        return this.roomRepository.getOrCreate(roomId).updateObject(object);
+    async updateObject(roomId, object) {
+        const room = await this.roomRepository.getOrCreate(roomId);
+        const updatedObject = room.updateObject(object);
+        this.roomRepository.markDirty(roomId);
+        return updatedObject;
     }
 
-    deleteObject(roomId, objectId, version) {
-        return this.roomRepository.getOrCreate(roomId).deleteObject(objectId, version);
+    async deleteObject(roomId, objectId, version) {
+        const room = await this.roomRepository.getOrCreate(roomId);
+        const deletedObject = room.deleteObject(objectId, version);
+        this.roomRepository.markDirty(roomId);
+        return deletedObject;
     }
 }
 

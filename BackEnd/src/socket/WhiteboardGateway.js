@@ -36,7 +36,7 @@ class WhiteboardGateway {
         socket.on(SOCKET_EVENTS.DISCONNECT, () => this.handleDisconnect(socket));
     }
 
-    handleRoomJoin(socket, data, callback) {
+    async handleRoomJoin(socket, data, callback) {
         const respond = getResponder(callback);
         const roomId = data?.roomId?.trim();
         const userName = data?.userName?.trim();
@@ -49,12 +49,19 @@ class WhiteboardGateway {
             return;
         }
 
+        let objects;
+        try {
+            objects = await this.whiteboardService.getSnapshot(roomId);
+        } catch (error) {
+            this.respondWithError(error, respond);
+            return;
+        }
+
         const previousRoomId = socket.data.roomId;
         const previousUserName = socket.data.userName;
         const isSameMembership = previousRoomId === roomId && previousUserName === userName;
 
         if (isSameMembership) {
-            const objects = this.whiteboardService.getSnapshot(roomId);
             this.addRoomMember(roomId, socket.id, userName);
             respond({
                 success: true,
@@ -95,7 +102,6 @@ class WhiteboardGateway {
         });
         this.emitRoomUsers(roomId);
 
-        const objects = this.whiteboardService.getSnapshot(roomId);
         respond({
             success: true,
             roomId,
@@ -106,13 +112,13 @@ class WhiteboardGateway {
         });
     }
 
-    handleObjectCreate(socket, data, callback) {
+    async handleObjectCreate(socket, data, callback) {
         const respond = getResponder(callback);
         const membership = this.getMembership(socket, respond);
         if (!membership) return;
 
         try {
-            const object = this.whiteboardService.createObject(
+            const object = await this.whiteboardService.createObject(
                 membership.roomId,
                 data?.object,
             );
@@ -130,13 +136,13 @@ class WhiteboardGateway {
         }
     }
 
-    handleObjectUpdate(socket, data, callback) {
+    async handleObjectUpdate(socket, data, callback) {
         const respond = getResponder(callback);
         const membership = this.getMembership(socket, respond);
         if (!membership) return;
 
         try {
-            const object = this.whiteboardService.updateObject(
+            const object = await this.whiteboardService.updateObject(
                 membership.roomId,
                 data?.object,
             );
@@ -154,13 +160,13 @@ class WhiteboardGateway {
         }
     }
 
-    handleObjectDelete(socket, data, callback) {
+    async handleObjectDelete(socket, data, callback) {
         const respond = getResponder(callback);
         const membership = this.getMembership(socket, respond);
         if (!membership) return;
 
         try {
-            this.whiteboardService.deleteObject(
+            await this.whiteboardService.deleteObject(
                 membership.roomId,
                 data?.objectId,
                 data?.version,

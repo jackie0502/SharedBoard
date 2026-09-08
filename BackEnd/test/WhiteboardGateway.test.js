@@ -28,7 +28,7 @@ const createSocket = (id) => {
     };
 };
 
-test("Gateway 會維護加入與離開房間的成員名單", () => {
+test("Gateway 會維護加入與離開房間的成員名單", async () => {
     const io = createIo();
     const service = { getSnapshot: () => [] };
     const logger = { log: () => {}, error: () => {} };
@@ -38,10 +38,10 @@ test("Gateway 會維護加入與離開房間的成員名單", () => {
     let aliceResponse;
     let bobResponse;
 
-    gateway.handleRoomJoin(alice, { roomId: "room-1", userName: "Alice" }, (data) => {
+    await gateway.handleRoomJoin(alice, { roomId: "room-1", userName: "Alice" }, (data) => {
         aliceResponse = data;
     });
-    gateway.handleRoomJoin(bob, { roomId: "room-1", userName: "Bob" }, (data) => {
+    await gateway.handleRoomJoin(bob, { roomId: "room-1", userName: "Bob" }, (data) => {
         bobResponse = data;
     });
 
@@ -68,7 +68,7 @@ test("Gateway 會維護加入與離開房間的成員名單", () => {
     });
 });
 
-test("Gateway 只會向同房間其他使用者廣播有效游標座標", () => {
+test("Gateway 只會向同房間其他使用者廣播有效游標座標", async () => {
     const io = createIo();
     const service = { getSnapshot: () => [] };
     const logger = { log: () => {}, error: () => {} };
@@ -77,7 +77,7 @@ test("Gateway 只會向同房間其他使用者廣播有效游標座標", () => 
     let validResponse;
     let invalidResponse;
 
-    gateway.handleRoomJoin(alice, { roomId: "room-1", userName: "Alice" }, () => {});
+    await gateway.handleRoomJoin(alice, { roomId: "room-1", userName: "Alice" }, () => {});
     alice.events.length = 0;
     gateway.handleCursorMove(alice, { x: 120, y: 80 }, (data) => {
         validResponse = data;
@@ -100,7 +100,7 @@ test("Gateway 只會向同房間其他使用者廣播有效游標座標", () => 
     }]);
 });
 
-test("Gateway 會廣播選取狀態與正在建立的圖形預覽", () => {
+test("Gateway 會廣播選取狀態與正在建立的圖形預覽", async () => {
     const io = createIo();
     const service = { getSnapshot: () => [] };
     const logger = { log: () => {}, error: () => {} };
@@ -108,7 +108,7 @@ test("Gateway 會廣播選取狀態與正在建立的圖形預覽", () => {
     const alice = createSocket("socket-a");
     let response;
 
-    gateway.handleRoomJoin(alice, { roomId: "room-1", userName: "Alice" }, () => {});
+    await gateway.handleRoomJoin(alice, { roomId: "room-1", userName: "Alice" }, () => {});
     alice.events.length = 0;
     gateway.handleInteractionUpdate(alice, {
         objectId: "shape-1",
@@ -138,13 +138,13 @@ test("Gateway 會廣播選取狀態與正在建立的圖形預覽", () => {
     });
 });
 
-test("Gateway 會拒絕無效的圖形預覽", () => {
+test("Gateway 會拒絕無效的圖形預覽", async () => {
     const gateway = new WhiteboardGateway(createIo(), { getSnapshot: () => [] }, {
         log: () => {}, error: () => {},
     });
     const alice = createSocket("socket-a");
     let response;
-    gateway.handleRoomJoin(alice, { roomId: "room-1", userName: "Alice" }, () => {});
+    await gateway.handleRoomJoin(alice, { roomId: "room-1", userName: "Alice" }, () => {});
 
     gateway.handleInteractionUpdate(alice, {
         objectId: "shape-1",
